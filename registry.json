@@ -1,4 +1,69 @@
 {
   "version": 1,
-  "plugins": []
+  "plugins": [
+    {
+      "id": "custom-room-bg",
+      "name": "自定义房间背景",
+      "version": "1.0.0",
+      "author": "AwCat",
+      "desc": "为当前房间设置仅自己可见的自定义背景图",
+      "minClientVersion": "1.56.0"
+    },
+    {
+      "id": "channel-tts",
+      "name": "频道文字消息 TTS",
+      "version": "1.0.0",
+      "author": "AwCat",
+      "desc": "朗读当前正在查看的频道里的新文字消息",
+      "minClientVersion": "1.56.0"
+    },
+    {
+      "id": "laughter-fav-fix",
+      "name": "语音包收藏显示修复",
+      "version": "1.0.1",
+      "author": "AwCat",
+      "desc": "在频道内收藏或取消收藏语音包后，立即刷新收藏列表",
+      "minClientVersion": "1.56.0"
+    },
+    {
+      "id": "screen-share-danmaku",
+      "name": "屏幕共享增强",
+      "version": "1.0.0",
+      "author": "AwCat",
+      "desc": "在屏幕共享画面上显示弹幕，并支持直接发送文字",
+      "minClientVersion": "1.56.0"
+    },
+    {
+      "id": "block-update",
+      "name": "屏蔽客户端更新",
+      "version": "1.0.0",
+      "author": "AwCat",
+      "desc": "屏蔽完整客户端更新和热更新，并在启动时检查补丁是否被覆盖",
+      "minClientVersion": "1.56.0"
+    },
+    {
+      "id": "official-room-deco",
+      "name": "强制上传房间自定义背景",
+      "version": "1.0.0",
+      "author": "AwCat",
+      "desc": "调用官方存量接口上传房间背景",
+      "minClientVersion": "1.56.0"
+    },
+    {
+      "id": "export-credentials",
+      "name": "用户凭据导出",
+      "version": "1.0.0",
+      "author": "AwCat",
+      "desc": "一键导出当前登录态、query 参数和会话 Cookie，供独立脚本调用官方接口",
+      "minClientVersion": "1.56.0"
+    },
+    {
+      "id": "heybox-dev-mcp",
+      "name": "开发调试 MCP",
+      "version": "1.0.0",
+      "author": "AwCat",
+      "desc": "本机调试桥：Cursor Agent 经 localhost 在渲染进程执行 JS、读 Vuex/webpack",
+      "minClientVersion": "1.56.0"
+    }
+  ]
 }
