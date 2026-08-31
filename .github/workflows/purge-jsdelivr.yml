@@ -1,0 +1,61 @@
+name: Purge jsDelivr
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Purge jsDelivr cache
+        env:
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          files=('registry.json')
+          before="${BEFORE:-}"
+          if [[ -n "$before" && ! "$before" =~ ^0+$ ]] && git cat-file -e "${before}^{commit}" 2>/dev/null; then
+            while IFS= read -r f; do
+              [[ -z "$f" || "$f" == .github/* ]] && continue
+              files+=("$f")
+            done < <(git diff --name-only --diff-filter=ACMR "$before" HEAD)
+          fi
+
+          mapfile -t files < <(printf '%s\n' "${files[@]}" | awk 'NF && !seen[$0]++')
+
+          fail=0
+          for f in "${files[@]}"; do
+            url="https://purge.jsdelivr.net/gh/${REPO}@${REF}/${f}"
+            echo "::group::purge ${f}"
+            echo "$url"
+            if ! body=$(curl -fsS --retry 3 --retry-all-errors --retry-delay 2 "$url"); then
+              echo "::error::request failed: ${f}"
+              fail=1
+            else
+              echo "$body"
+              if [[ "$body" != *'"status":"finished"'* && "$body" != *'"status": "finished"'* ]]; then
+                echo "::warning::jsDelivr did not report finished for ${f}"
+                if [[ "$f" == registry.json ]]; then
+                  fail=1
+                fi
+              fi
+            fi
+            echo '::endgroup::'
+          done
+
+          if [[ "$fail" -ne 0 ]]; then
+            echo '::error::registry.json purge failed'
+            exit 1
+          fi
