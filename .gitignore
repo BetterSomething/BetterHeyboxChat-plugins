@@ -1,3 +1,5 @@
 # 忽略
 .DS_Store
 Thumbs.db
+
+/screen-share-unlock/
