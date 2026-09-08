@@ -8,14 +8,18 @@
  * - 画中画：钩 requestPictureInPicture；Electron 用 canvas.captureStream 合成弹幕，其它环境可走 Document PiP
  * - 自己在共享：Vuex my_screen_sharing；预览 .cpt-screenshare-me-preview（可能被暂停）
  * - 弹幕只叠在 occupy / 自己的 preview 上，绝不挂到房间聊天主区
- * 不伪造服务端协议、不碰 TRTC/火山 RTC。
+ * - 右上角官方 quality-block 旁显示 P2P / TRTC / 火山RTC
+ * - 左下角 P2P/中转按钮走官方 $rtc，不自建 WebRTC
  */
 (function () {
   'use strict';
 
   var PLUGIN_ID = 'screen-share-danmaku';
   var STORAGE_KEY = 'settings';
+  var EXTRACT_FILE = 'extract.js';
   var LAYER_ID = 'bhchat-ss-danmaku-layer';
+  var MODE_ID = 'bhchat-ss-mode-block';
+  var ROUTE_ID = 'bhchat-ss-route-toggle';
   var BUS_EVENTS = ['SOCKET_SEND_MESSAGE', 'SOCKET_USER_IM_MESSAGE'];
 
   var RECEIVE_PRIVATE = 1;
@@ -71,6 +75,9 @@
     overlay: true,
     input: true,
     showName: true,
+    showMode: true,
+    showRouteToggle: true,
+    preferP2P: true,
     opacity: 0.92,
     speed: 8,
   };
@@ -79,6 +86,9 @@
     overlay: DEFAULTS.overlay,
     input: DEFAULTS.input,
     showName: DEFAULTS.showName,
+    showMode: DEFAULTS.showMode,
+    showRouteToggle: DEFAULTS.showRouteToggle,
+    preferP2P: DEFAULTS.preferP2P,
     opacity: DEFAULTS.opacity,
     speed: DEFAULTS.speed,
   };
@@ -107,6 +117,12 @@
   var pipItems = [];
   var lastShare = false;
   var lastStatus = '等待屏幕共享…';
+  var lastModeLabel = '';
+  var routeBusy = false;
+  var chromeMutating = false;
+  var observerQueued = false;
+  var modeEl = null;
+  var routeEl = null;
   var trackRows = [0, 0, 0, 0, 0, 0, 0, 0];
 
   function clamp(n, min, max) {
@@ -131,6 +147,9 @@
       overlay: raw.overlay !== false,
       input: raw.input !== false,
       showName: raw.showName !== false,
+      showMode: raw.showMode !== false,
+      showRouteToggle: raw.showRouteToggle !== false,
+      preferP2P: raw.preferP2P !== false,
       opacity: clamp(raw.opacity != null ? raw.opacity : DEFAULTS.opacity, 0.3, 1),
       speed: clamp(raw.speed != null ? raw.speed : DEFAULTS.speed, 4, 16),
     };
@@ -155,6 +174,9 @@
       overlay: !!settings.overlay,
       input: !!settings.input,
       showName: !!settings.showName,
+      showMode: !!settings.showMode,
+      showRouteToggle: !!settings.showRouteToggle,
+      preferP2P: !!settings.preferP2P,
       opacity: settings.opacity,
       speed: settings.speed,
     });
@@ -181,6 +203,85 @@
   function getVueRoot() {
     var app = document.getElementById('app');
     return (app && app.__vue__) || null;
+  }
+
+  function fallbackExtract() {
+    return {
+      modeLabel: function (transport, apiType) {
+        var t = String(transport || '').toLowerCase();
+        if (t === 'p2p') return 'P2P';
+        if (t === 'switching') return '切换中';
+        var api = String(apiType || '').toLowerCase();
+        if (api === 'trtc') return 'TRTC';
+        if (api === 'volc') return '火山RTC';
+        return '中转';
+      },
+      isP2P: function (transport) {
+        return String(transport || '').toLowerCase() === 'p2p';
+      },
+      canUseP2P: function (p2pEnabled, memberCount) {
+        return p2pEnabled === true && Number(memberCount) === 2;
+      },
+      p2pUnavailableReason: function (p2pEnabled, memberCount) {
+        if (p2pEnabled !== true) return '当前房间未开启 P2P';
+        if (Number(memberCount) !== 2) return 'P2P 仅支持两人频道';
+        return '';
+      },
+      toggleTarget: function (transport) {
+        return String(transport || '').toLowerCase() === 'p2p' ? 'commercial' : 'p2p';
+      },
+    };
+  }
+
+  function getExtract() {
+    return window.BhchatScreenShareDanmaku || fallbackExtract();
+  }
+
+  function readPluginFile(rel) {
+    var preload = window.bhchatPreload && window.bhchatPreload.plugins;
+    if (preload && typeof preload.readUserFile === 'function') {
+      try {
+        var fromPreload = preload.readUserFile(PLUGIN_ID, rel);
+        if (fromPreload) return fromPreload;
+      } catch (err) {
+        /* ignore */
+      }
+    }
+    if (window.BHChat && window.BHChat.plugins && typeof window.BHChat.plugins.readUserFile === 'function') {
+      try {
+        return window.BHChat.plugins.readUserFile(PLUGIN_ID, rel) || '';
+      } catch (err2) {
+        return '';
+      }
+    }
+    return '';
+  }
+
+  function injectUserScript(rel) {
+    var code = readPluginFile(rel);
+    if (!code) return false;
+    var script = document.createElement('script');
+    script.text = typeof code === 'string' ? code : String(code);
+    script.setAttribute('data-bhchat-plugin-file', PLUGIN_ID + '/' + rel);
+    document.head.appendChild(script);
+    return true;
+  }
+
+  function getRtc() {
+    var vue = getVueRoot();
+    if (vue && vue.$rtc) return vue.$rtc;
+    if (vue && vue.$root && vue.$root.$rtc) return vue.$root.$rtc;
+    return null;
+  }
+
+  function notifyToast(ok, text) {
+    var api = window.toastAPI;
+    if (!api || !text) return;
+    try {
+      if (ok && typeof api.success === 'function') api.success(text);
+      else if (!ok && typeof api.error === 'function') api.error(text);
+      else if (typeof api.info === 'function') api.info(text);
+    } catch (err) {}
   }
 
   function unique(list) {
@@ -412,6 +513,46 @@
     return null;
   }
 
+  function findShareWrapper() {
+    var wrap = document.querySelector('.cpt-screen-share-wrapper');
+    if (wrap) return wrap;
+    var host = findShareHost();
+    if (host && host.closest) {
+      var parent = host.closest('.cpt-screen-share-wrapper');
+      if (parent) return parent;
+    }
+    return host;
+  }
+
+  function getTransportSnapshot() {
+    var snap = mapState([
+      'screen_share_transport',
+      'screen_share_p2p_route',
+      'screen_share_p2p_enabled',
+      'cur_channel_data',
+      'my_screen_sharing',
+      'screen_sharing_info',
+    ]);
+    var channel = snap.cur_channel_data || {};
+    var members = channel.members;
+    return {
+      transport: snap.screen_share_transport || '',
+      route: snap.screen_share_p2p_route || '',
+      p2pEnabled: snap.screen_share_p2p_enabled === true,
+      apiType: channel.api_type || channel.rtc_api_type || '',
+      memberCount: Array.isArray(members) ? members.length : 0,
+      mySharing: !!snap.my_screen_sharing,
+      watching: isSharingInfoActive(snap.screen_sharing_info),
+    };
+  }
+
+  function currentShareRole(snap) {
+    snap = snap || getTransportSnapshot();
+    if (snap.mySharing) return 'sharer';
+    if (snap.watching) return 'viewer';
+    return '';
+  }
+
   function isPipSharing() {
     return !!(pipCanvasActive || pipTrackEl || (pipWindow && !pipWindow.closed));
   }
@@ -439,7 +580,17 @@
         '.bhchat-ss-form{display:flex;align-items:center;gap:6px;flex:1 1 160px;min-width:132px;max-width:280px;margin:0 8px 6px;pointer-events:auto;z-index:10}' +
         '.bhchat-ss-form input{flex:1;min-width:0;height:28px;border:none;border-radius:6px;padding:0 10px;background:rgba(255,255,255,.14);color:#fff;font-size:13px;outline:none}' +
         '.bhchat-ss-form button{height:28px;padding:0 10px;border:none;border-radius:6px;background:var(--brand-fill,#2d7d46);color:#fff;font-weight:700;cursor:pointer;flex-shrink:0}' +
-        '.cpt-screen-share-wrapper .screen-share-operate.bhchat-ss-form-focus{opacity:1}',
+        '.cpt-screen-share-wrapper .screen-share-operate.bhchat-ss-form-focus{opacity:1}' +
+        '.cpt-screen-share-wrapper .quality-block[data-bhchat-mode]{width:auto!important;min-width:142px!important;overflow:visible!important;justify-content:flex-start!important}' +
+        '.cpt-screen-share-wrapper .quality-block[data-bhchat-mode]::after{display:none!important}' +
+        '.cpt-screen-share-wrapper .quality-block[data-bhchat-mode]::before{content:attr(data-bhchat-mode);flex:0 0 auto;min-width:52px;padding:0 6px;font:500 12px/18px Roboto,"Microsoft YaHei",sans-serif;text-align:center;color:#75ef7d;-webkit-text-fill-color:#75ef7d;box-shadow:inset -1px 0 0 rgba(255,255,255,.08)}' +
+        '.cpt-screen-share-wrapper .quality-block[data-bhchat-mode]>div:first-child{box-shadow:inset -1px 0 0 rgba(255,255,255,.08)}' +
+        '.cpt-screen-share-wrapper .screen-share-operate .bhchat-ss-route-toggle{display:flex;align-items:center;height:24px;margin-right:8px;flex-shrink:0;position:static;left:auto;bottom:auto;padding:0;border:none;border-radius:0;background:transparent;pointer-events:auto;user-select:none;z-index:10}' +
+        '.cpt-screen-share-wrapper .screen-share-operate .bhchat-ss-route-toggle button{height:24px;padding:0 8px;border:none;border-radius:4px;background:transparent;color:rgba(255,255,255,.5);font-size:12px;font-weight:500;cursor:pointer}' +
+        '.cpt-screen-share-wrapper .screen-share-operate .bhchat-ss-route-toggle button:hover{color:#fff}' +
+        '.cpt-screen-share-wrapper .screen-share-operate .bhchat-ss-route-toggle button.active{color:var(--brand-text,#7dd95e);background:transparent}' +
+        '.cpt-screen-share-wrapper .screen-share-operate .bhchat-ss-route-toggle button:disabled{opacity:.55;cursor:wait}' +
+        '.cpt-screen-share-wrapper .screen-share-operate .bhchat-ss-route-toggle button.dim{opacity:.45}',
     );
   }
 
@@ -460,6 +611,49 @@
     if (formEl && formEl.parentNode) formEl.parentNode.removeChild(formEl);
     formEl = null;
     inputEl = null;
+  }
+
+  function findOfficialQuality() {
+    return document.querySelector('.cpt-screen-share-wrapper .quality-block');
+  }
+
+  function findLeftOperate() {
+    var operate = findOperateHost();
+    return (operate && operate.querySelector('.left-operate')) || null;
+  }
+
+  function isOfficialMenuShown() {
+    var operate = findOperateHost();
+    if (operate && operate.classList.contains('show')) return true;
+    var store = getStore();
+    return !!(store && store.getters && store.getters.is_show_screen_share_menu);
+  }
+
+  function clearQualityMode(el) {
+    if (!el) return;
+    el.removeAttribute('data-bhchat-mode');
+    el.style.removeProperty('width');
+    el.style.removeProperty('min-width');
+    el.style.removeProperty('overflow');
+    el.classList.remove('bhchat-ss-has-mode', 'is-p2p-mode');
+  }
+
+  function removeModeBlock() {
+    clearQualityMode(findOfficialQuality());
+    var leftover = document.getElementById(MODE_ID);
+    if (leftover && leftover.parentNode) leftover.parentNode.removeChild(leftover);
+    modeEl = null;
+    lastModeLabel = '';
+  }
+
+  function removeRouteToggle() {
+    if (routeEl && routeEl.parentNode) routeEl.parentNode.removeChild(routeEl);
+    routeEl = null;
+  }
+
+  function removeChrome() {
+    removeModeBlock();
+    removeRouteToggle();
   }
 
   function ensureLayer() {
@@ -510,6 +704,196 @@
     if (mid && mid.parentNode === host) host.insertBefore(formEl, mid);
     else host.appendChild(formEl);
     return formEl;
+  }
+
+  function ensureModeBlock() {
+    var leftover = document.getElementById(MODE_ID);
+    if (leftover && leftover.parentNode) leftover.parentNode.removeChild(leftover);
+    var official = findOfficialQuality();
+    if (!official) {
+      modeEl = null;
+      return null;
+    }
+    modeEl = official;
+    return modeEl;
+  }
+
+  function ensureRouteToggle() {
+    var host = findLeftOperate() || findOperateHost();
+    if (!host) return null;
+    if (routeEl && routeEl.parentNode === host) return routeEl;
+    var existing = document.getElementById(ROUTE_ID);
+    if (routeEl && routeEl.parentNode) routeEl.parentNode.removeChild(routeEl);
+    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+    routeEl = document.createElement('div');
+    routeEl.id = ROUTE_ID;
+    routeEl.className = 'bhchat-ss-route-toggle';
+    var p2pBtn = document.createElement('button');
+    p2pBtn.type = 'button';
+    p2pBtn.setAttribute('data-target', 'p2p');
+    p2pBtn.textContent = 'P2P';
+    var relayBtn = document.createElement('button');
+    relayBtn.type = 'button';
+    relayBtn.setAttribute('data-target', 'commercial');
+    relayBtn.textContent = '中转';
+    p2pBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      switchShareRoute('p2p');
+    });
+    relayBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      switchShareRoute('commercial');
+    });
+    routeEl.appendChild(p2pBtn);
+    routeEl.appendChild(relayBtn);
+    host.insertBefore(routeEl, host.firstChild);
+    return routeEl;
+  }
+
+  function updateModeBlock() {
+    if (!settings.showMode) {
+      removeModeBlock();
+      return;
+    }
+    if (!ensureModeBlock()) return;
+    var snap = getTransportSnapshot();
+    var extract = getExtract();
+    var label = extract.modeLabel(snap.transport, snap.apiType);
+    lastModeLabel = label;
+    if (modeEl.getAttribute('data-bhchat-mode') !== label) {
+      modeEl.setAttribute('data-bhchat-mode', label);
+    }
+    if (modeEl.style.getPropertyValue('min-width') !== '142px') {
+      modeEl.style.setProperty('width', 'auto', 'important');
+      modeEl.style.setProperty('min-width', '142px', 'important');
+      modeEl.style.setProperty('overflow', 'visible', 'important');
+    }
+  }
+
+  function updateRouteToggle() {
+    if (!settings.showRouteToggle) {
+      removeRouteToggle();
+      return;
+    }
+    if (!ensureRouteToggle()) return;
+    var snap = getTransportSnapshot();
+    var extract = getExtract();
+    var onP2P = extract.isP2P(snap.transport);
+    var switching = String(snap.transport || '').toLowerCase() === 'switching';
+    var canP2P = extract.canUseP2P(snap.p2pEnabled, snap.memberCount);
+    var buttons = routeEl.querySelectorAll('button');
+    for (var i = 0; i < buttons.length; i++) {
+      var btn = buttons[i];
+      var target = btn.getAttribute('data-target');
+      btn.classList.toggle('active', (target === 'p2p' && onP2P) || (target === 'commercial' && !onP2P && !switching));
+      btn.classList.toggle('dim', target === 'p2p' && !onP2P && !canP2P);
+      btn.disabled = routeBusy || switching;
+    }
+    routeEl.title = canP2P
+      ? '切换 P2P 直连或商业 RTC 中转'
+      : extract.p2pUnavailableReason(snap.p2pEnabled, snap.memberCount) || '切换 P2P / 中转';
+  }
+
+  function enforcePreferRelay(snap) {
+    if (settings.preferP2P) return;
+    snap = snap || getTransportSnapshot();
+    if (!getExtract().isP2P(snap.transport)) return;
+    switchShareRoute('commercial', { silent: true });
+  }
+
+  function switchShareRoute(target, opts) {
+    opts = opts || {};
+    if (routeBusy) return;
+    var snap = getTransportSnapshot();
+    var extract = getExtract();
+    if (target === 'p2p') {
+      var reason = extract.p2pUnavailableReason(snap.p2pEnabled, snap.memberCount);
+      if (reason) {
+        lastStatus = reason;
+        if (!opts.silent) notifyToast(false, reason);
+        updateRouteToggle();
+        return;
+      }
+      if (extract.isP2P(snap.transport)) return;
+      settings.preferP2P = true;
+      saveSettings();
+      var rtcUp = getRtc();
+      if (!rtcUp || typeof rtcUp.tryP2PReupgrade !== 'function') {
+        lastStatus = '未找到官方 P2P 入口';
+        if (!opts.silent) notifyToast(false, lastStatus);
+        return;
+      }
+      routeBusy = true;
+      updateRouteToggle();
+      Promise.resolve(rtcUp.tryP2PReupgrade())
+        .then(function () {
+          lastStatus = '已请求切换到 P2P';
+        })
+        .catch(function (err) {
+          lastStatus = '切换 P2P 失败';
+          if (!opts.silent) notifyToast(false, (err && err.message) || lastStatus);
+        })
+        .then(function () {
+          routeBusy = false;
+          syncChrome();
+        });
+      return;
+    }
+    var current = String(snap.transport || '').toLowerCase();
+    if (current !== 'p2p' && current !== 'switching') {
+      settings.preferP2P = false;
+      saveSettings();
+      return;
+    }
+    settings.preferP2P = false;
+    saveSettings();
+    var rtc = getRtc();
+    if (!rtc) {
+      lastStatus = '未找到官方屏幕共享入口';
+      if (!opts.silent) notifyToast(false, lastStatus);
+      return;
+    }
+    if (typeof rtc.cancelScheduledP2PReupgrade === 'function') {
+      rtc.cancelScheduledP2PReupgrade();
+    }
+    if (typeof rtc.cancelP2PUpgrade !== 'function') {
+      lastStatus = '当前客户端不支持切换中转';
+      if (!opts.silent) notifyToast(false, lastStatus);
+      return;
+    }
+    routeBusy = true;
+    updateRouteToggle();
+    Promise.resolve(rtc.cancelP2PUpgrade(currentShareRole(snap) || 'viewer', 'user_stop'))
+      .then(function () {
+        lastStatus = '已切换到中转';
+      })
+      .catch(function (err) {
+        lastStatus = '切换中转失败';
+        if (!opts.silent) notifyToast(false, (err && err.message) || lastStatus);
+      })
+      .then(function () {
+        routeBusy = false;
+        syncChrome();
+      });
+  }
+
+  function syncChrome() {
+    if (chromeMutating) return;
+    chromeMutating = true;
+    try {
+      var sharing = isScreenSharing();
+      if (!sharing) {
+        removeChrome();
+        return;
+      }
+      updateModeBlock();
+      updateRouteToggle();
+      enforcePreferRelay();
+    } finally {
+      chromeMutating = false;
+    }
   }
 
   function isShareVideo(video) {
@@ -770,6 +1154,7 @@
       closeDocumentPip();
       removeLayer();
       removeForm();
+      removeChrome();
       lastStatus = '等待屏幕共享…';
       return;
     }
@@ -788,6 +1173,7 @@
     } else {
       removeForm();
     }
+    syncChrome();
   }
 
   function pickRow() {
@@ -981,26 +1367,45 @@
       unwatchShare = window.BHChat.watch(function () {
         var snap = getShareSnapshot();
         var host = findShareHost();
+        var transport = getTransportSnapshot();
         return [
           snap.my_screen_sharing ? '1' : '0',
           isSharingInfoActive(snap.screen_sharing_info) ? '1' : '0',
           String(snap.screen_share_cpt_height || 0),
           host ? host.className + ':' + host.offsetWidth + 'x' + host.offsetHeight : '',
+          String(transport.transport || ''),
+          String(transport.route || ''),
+          transport.p2pEnabled ? '1' : '0',
+          String(transport.apiType || ''),
+          String(transport.memberCount || 0),
+          isOfficialMenuShown() ? '1' : '0',
+          findOfficialQuality() ? 'q' : '',
         ].join('|');
       }, syncLayer);
     }
     if (window.MutationObserver) {
       shareObserver = new MutationObserver(function () {
-        var now = isScreenSharing();
-        var host = findShareHost();
-        var operate = findOperateHost();
-        if (
-          now !== lastShare ||
-          (now && layerEl && host && layerEl.parentNode !== host) ||
-          (now && settings.input && operate && (!formEl || formEl.parentNode !== operate))
-        ) {
-          syncLayer();
-        }
+        if (chromeMutating || observerQueued) return;
+        observerQueued = true;
+        var raf = window.requestAnimationFrame || function (cb) { return setTimeout(cb, 16); };
+        raf(function () {
+          observerQueued = false;
+          if (chromeMutating) return;
+          var now = isScreenSharing();
+          var host = findShareHost();
+          var operate = findOperateHost();
+          var left = findLeftOperate();
+          var quality = findOfficialQuality();
+          if (
+            now !== lastShare ||
+            (now && layerEl && host && layerEl.parentNode !== host) ||
+            (now && settings.input && operate && (!formEl || formEl.parentNode !== operate)) ||
+            (now && settings.showMode && quality && quality.getAttribute('data-bhchat-mode') !== lastModeLabel) ||
+            (now && routeEl && left && routeEl.parentNode !== left)
+          ) {
+            syncLayer();
+          }
+        });
       });
       shareObserver.observe(document.body, {
         childList: true,
@@ -1023,8 +1428,20 @@
           overlay: !!settings.overlay,
           input: !!settings.input,
           showName: !!settings.showName,
+          showMode: !!settings.showMode,
+          showRouteToggle: !!settings.showRouteToggle,
+          preferP2P: !!settings.preferP2P,
           opacity: settings.opacity,
           speed: settings.speed,
+        };
+      },
+      getMode: function () {
+        var snap = getTransportSnapshot();
+        return {
+          label: getExtract().modeLabel(snap.transport, snap.apiType),
+          transport: snap.transport,
+          apiType: snap.apiType,
+          canUseP2P: getExtract().canUseP2P(snap.p2pEnabled, snap.memberCount),
         };
       },
     };
@@ -1038,6 +1455,9 @@
           overlay: settings.overlay,
           input: settings.input,
           showName: settings.showName,
+          showMode: settings.showMode,
+          showRouteToggle: settings.showRouteToggle,
+          preferP2P: settings.preferP2P,
           opacity: Math.round(settings.opacity * 100),
           speed: settings.speed,
         };
@@ -1050,6 +1470,9 @@
           this.overlay = settings.overlay;
           this.input = settings.input;
           this.showName = settings.showName;
+          this.showMode = settings.showMode;
+          this.showRouteToggle = settings.showRouteToggle;
+          this.preferP2P = settings.preferP2P;
           this.opacity = Math.round(settings.opacity * 100);
           this.speed = settings.speed;
         },
@@ -1057,6 +1480,9 @@
           settings.overlay = !!this.overlay;
           settings.input = !!this.input;
           settings.showName = !!this.showName;
+          settings.showMode = !!this.showMode;
+          settings.showRouteToggle = !!this.showRouteToggle;
+          settings.preferP2P = !!this.preferP2P;
           settings.opacity = clamp(this.opacity / 100, 0.3, 1);
           settings.speed = clamp(this.speed, 4, 16);
           saveSettings();
@@ -1102,6 +1528,9 @@
             toggleRow('共享画面显示弹幕', 'overlay'),
             toggleRow('显示弹幕发送框', 'input'),
             toggleRow('弹幕显示昵称', 'showName'),
+            toggleRow('显示连接模式', 'showMode'),
+            toggleRow('显示 P2P/中转切换', 'showRouteToggle'),
+            toggleRow('优先使用 P2P', 'preferP2P'),
             h('div', { class: 'row' }, [
               h('span', '透明度 ' + this.opacity + '%'),
               h('input', {
@@ -1147,6 +1576,7 @@
   }
 
   function activate() {
+    if (!window.BhchatScreenShareDanmaku) injectUserScript(EXTRACT_FILE);
     loadSettings().then(function () {
       injectStyles();
       registerApi();
