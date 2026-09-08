@@ -1,13 +1,14 @@
 /**
- * 屏蔽客户端更新：拦截官方 updateClient / updateAsarResource / setAsarVersion，
- * 并把开关写到 betterheyboxchat/update-block.json，供 main-bridge 在主进程拦截 IPC。
- * 不伪造更新协议、不改 bytenode。
+ * 屏蔽客户端更新：阻断官方检查更新 API，检查失败则不弹窗。
+ * 主进程 webRequest / IPC 兜底；不伪造更新协议、不改 bytenode。
  */
 (function () {
   'use strict';
 
   var PLUGIN_ID = 'block-update';
   var STORAGE_KEY = 'settings';
+  var CHECK_PATH = '/chatroom/v2/settings/version/update/check';
+  var CONTENT_PATH = '/chatroom/v2/settings/version/content';
 
   var DEFAULTS = {
     blockClient: true,
@@ -21,10 +22,11 @@
 
   var storeNs = null;
   var lastStatus = '等待挂接…';
-  var origUpdateClient = null;
-  var origUpdateAsar = null;
-  var origSetAsarVersion = null;
-  var hooked = false;
+  var origFetch = null;
+  var origXhrOpen = null;
+  var origXhrSend = null;
+  var origSendRequest = null;
+  var hookedNet = false;
 
   function getNs() {
     if (storeNs) return storeNs;
@@ -69,6 +71,74 @@
     return { client: !!settings.blockClient, hotfix: !!settings.blockHotfix };
   }
 
+  function pluginActive() {
+    return !(window.BHChat && window.BHChat.isPluginEnabled) || window.BHChat.isPluginEnabled(PLUGIN_ID);
+  }
+
+  function shouldBlockUrl(url) {
+    var text = String(url || '');
+    if (!pluginActive()) return false;
+    if (text.indexOf(CHECK_PATH) === -1 && text.indexOf(CONTENT_PATH) === -1) return false;
+    return !!(settings.blockClient || settings.blockHotfix);
+  }
+
+  function blockedError() {
+    lastStatus = '已阻断官方检查更新接口';
+    var err = new Error(lastStatus);
+    err.name = 'BhchatUpdateBlocked';
+    return err;
+  }
+
+  function wrapNetwork() {
+    if (hookedNet) return true;
+    if (typeof window.fetch === 'function' && !window.fetch.__bhchat_block) {
+      origFetch = window.fetch.bind(window);
+      window.fetch = function (input, init) {
+        var url = input && typeof input === 'object' && input.url != null ? input.url : input;
+        if (shouldBlockUrl(url)) return Promise.reject(blockedError());
+        return origFetch(input, init);
+      };
+      window.fetch.__bhchat_block = true;
+    }
+    if (window.XMLHttpRequest && window.XMLHttpRequest.prototype && !window.XMLHttpRequest.prototype.open.__bhchat_block) {
+      origXhrOpen = window.XMLHttpRequest.prototype.open;
+      origXhrSend = window.XMLHttpRequest.prototype.send;
+      window.XMLHttpRequest.prototype.open = function (method, url) {
+        this.__bhchat_update_url = url;
+        this.__bhchat_update_block = shouldBlockUrl(url);
+        return origXhrOpen.apply(this, arguments);
+      };
+      window.XMLHttpRequest.prototype.open.__bhchat_block = true;
+      window.XMLHttpRequest.prototype.send = function () {
+        if (this.__bhchat_update_block && shouldBlockUrl(this.__bhchat_update_url)) {
+          var xhr = this;
+          setTimeout(function () {
+            try {
+              if (typeof xhr.dispatchEvent === 'function') {
+                xhr.dispatchEvent(new Event('error'));
+              }
+              if (typeof xhr.onerror === 'function') xhr.onerror(blockedError());
+            } catch (err) {}
+          }, 0);
+          return;
+        }
+        return origXhrSend.apply(this, arguments);
+      };
+    }
+    var api = window.electronAPI;
+    if (api && typeof api.sendRequest === 'function' && !api.sendRequest.__bhchat_block) {
+      origSendRequest = api.sendRequest.bind(api);
+      api.sendRequest = function (options) {
+        var url = options && (options.url || options.uri || options.path);
+        if (shouldBlockUrl(url)) return Promise.reject(blockedError());
+        return origSendRequest(options);
+      };
+      api.sendRequest.__bhchat_block = true;
+    }
+    hookedNet = true;
+    return true;
+  }
+
   function describePatch(info) {
     if (!info) return '尚未拿到补丁状态（需 Debug 安装器重装后由 main-bridge 写入）';
     var repaired = info.repaired || [];
@@ -83,57 +153,14 @@
   function refreshStatus() {
     var info = window.BHChat && window.BHChat.patch ? window.BHChat.patch.getStatus() : null;
     lastStatus =
+      (settings.blockClient || settings.blockHotfix ? '检查更新：已阻断' : '检查更新：放行') +
+      '；' +
       (settings.blockClient ? '完整更新：已屏蔽' : '完整更新：放行') +
       '；' +
       (settings.blockHotfix ? '热更新：已屏蔽' : '热更新：放行') +
       '。' +
       describePatch(info);
     return lastStatus;
-  }
-
-  function pluginActive() {
-    return !(window.BHChat && window.BHChat.isPluginEnabled) || window.BHChat.isPluginEnabled(PLUGIN_ID);
-  }
-
-  function wrapElectronApi() {
-    var api = window.electronAPI;
-    if (!api || hooked) return !!api;
-    if (typeof api.updateClient === 'function' && !api.updateClient.__bhchat_block) {
-      origUpdateClient = api.updateClient.bind(api);
-      api.updateClient = function (payload) {
-        if (pluginActive() && settings.blockClient) {
-          lastStatus = '已拦截完整客户端更新';
-          return;
-        }
-        return origUpdateClient(payload);
-      };
-      api.updateClient.__bhchat_block = true;
-    }
-    if (typeof api.updateAsarResource === 'function' && !api.updateAsarResource.__bhchat_block) {
-      origUpdateAsar = api.updateAsarResource.bind(api);
-      api.updateAsarResource = function (version, downloadUrl, manifest, callback) {
-        if (pluginActive() && settings.blockHotfix) {
-          lastStatus = '已拦截热更新 updateAsarResource';
-          if (typeof callback === 'function') callback('error', { message: lastStatus });
-          return;
-        }
-        return origUpdateAsar(version, downloadUrl, manifest, callback);
-      };
-      api.updateAsarResource.__bhchat_block = true;
-    }
-    if (typeof api.setAsarVersion === 'function' && !api.setAsarVersion.__bhchat_block) {
-      origSetAsarVersion = api.setAsarVersion.bind(api);
-      api.setAsarVersion = function (version, relaunchApp) {
-        if (pluginActive() && settings.blockHotfix) {
-          lastStatus = '已拦截 setAsarVersion';
-          return;
-        }
-        return origSetAsarVersion(version, relaunchApp);
-      };
-      api.setAsarVersion.__bhchat_block = true;
-    }
-    hooked = !!(api.updateClient && api.updateClient.__bhchat_block);
-    return hooked;
   }
 
   function registerApi() {
@@ -254,7 +281,7 @@
   function activate() {
     loadSettings().then(function () {
       writeFlags();
-      wrapElectronApi();
+      wrapNetwork();
       refreshStatus();
       registerApi();
       if (window.BHChat && window.BHChat.registerPanel) {
@@ -271,6 +298,9 @@
       }
     });
   }
+
+  wrapNetwork();
+  writeFlags();
 
   if (window.BHChat && window.BHChat.onReady) {
     window.BHChat.onReady(activate);

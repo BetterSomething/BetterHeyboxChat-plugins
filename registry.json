@@ -36,9 +36,9 @@
     {
       "id": "block-update",
       "name": "屏蔽客户端更新",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "author": "AwCat",
-      "desc": "屏蔽完整客户端更新和热更新，并在启动时检查补丁是否被覆盖",
+      "desc": "阻断官方检查更新接口，完整更新和热更新都不会弹出",
       "minClientVersion": "1.56.0"
     },
     {
