@@ -44,7 +44,7 @@
     {
       "id": "official-room-deco",
       "name": "强制上传房间自定义背景",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "AwCat",
       "desc": "调用官方存量接口上传房间背景",
       "minClientVersion": "1.56.0"
@@ -52,7 +52,7 @@
     {
       "id": "export-credentials",
       "name": "用户凭据导出",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "AwCat",
       "desc": "一键导出当前登录态、query 参数和会话 Cookie，供独立脚本调用官方接口",
       "minClientVersion": "1.56.0"
@@ -60,9 +60,17 @@
     {
       "id": "heybox-dev-mcp",
       "name": "开发调试 MCP",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "AwCat",
       "desc": "本机调试桥：Cursor Agent 经 localhost 在渲染进程执行 JS、读 Vuex/webpack",
+      "minClientVersion": "1.56.0"
+    },
+    {
+      "id": "heybox-bbs",
+      "name": "社区功能补全",
+      "version": "1.1.1",
+      "author": "AwCat",
+      "desc": "电脑上也能刷小黑盒！为客户端增加社区主页",
       "minClientVersion": "1.56.0"
     }
   ]
