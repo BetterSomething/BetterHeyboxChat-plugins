@@ -42,6 +42,13 @@
     return String(id);
   }
 
+  // 官方聊天里打开详情用的是字符串类型，不是信息流里的数字 link_type。
+  function officialLinkType(link) {
+    if (link && link.has_video) return 'video';
+    if (link && link.use_concept_type) return 'concept';
+    return 'article';
+  }
+
   function pickTitle(link) {
     if (!link || typeof link !== 'object') return '未命名帖子';
     var title = asText(link.title);
@@ -225,6 +232,7 @@
     PAGE_LIMIT: PAGE_LIMIT,
     isAdCard: isAdCard,
     pickLinkId: pickLinkId,
+    officialLinkType: officialLinkType,
     pickTitle: pickTitle,
     pickDescription: pickDescription,
     pickUser: pickUser,

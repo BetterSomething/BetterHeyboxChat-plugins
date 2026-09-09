@@ -68,7 +68,7 @@
     {
       "id": "heybox-bbs",
       "name": "社区功能补全",
-      "version": "1.1.1",
+      "version": "1.1.2",
       "author": "AwCat",
       "desc": "电脑上也能刷小黑盒！为客户端增加社区主页",
       "minClientVersion": "1.56.0"

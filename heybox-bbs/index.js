@@ -121,17 +121,21 @@
     }
   }
 
-  function emitShowLinkDetail(linkId, linkType) {
+  function officialLinkType(link) {
+    var E = getExtract();
+    if (E && typeof E.officialLinkType === 'function') return E.officialLinkType(link);
+    if (link && link.has_video) return 'video';
+    if (link && link.use_concept_type) return 'concept';
+    return 'article';
+  }
+
+  function emitShowLinkDetail(linkId, link) {
     var map = window.__bhchat_module_map__ || {};
     var busMod = safeRequire(map.EVENT_BUS || '30570');
     var bus = busMod && (busMod.A || busMod.default || busMod);
     if (!bus || typeof bus.$emit !== 'function') return false;
     try {
-      if (linkType == null || linkType === '') {
-        bus.$emit('ShowLinkDetail', linkId, -1);
-      } else {
-        bus.$emit('ShowLinkDetail', linkId, -1, linkType);
-      }
+      bus.$emit('ShowLinkDetail', linkId, 0, officialLinkType(link));
       return true;
     } catch (err) {
       console.warn('[BetterHeyboxChat] heybox-bbs ShowLinkDetail:', err && err.message);
@@ -498,7 +502,7 @@
           if (!id) return;
           this.detailHint = '';
           this.detailLinkId = id;
-          var emitted = emitShowLinkDetail(id, link.link_type);
+          var emitted = emitShowLinkDetail(id, link);
           if (!emitted) {
             this.detailHint = '无法打开内置详情';
             return;
