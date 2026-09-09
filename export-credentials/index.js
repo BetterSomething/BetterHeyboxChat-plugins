@@ -276,10 +276,28 @@
     console.log('[BetterHeyboxChat] export-credentials plugin activated');
   }
 
+  function readPluginFile(rel) {
+    var preload = window.bhchatPreload && window.bhchatPreload.plugins;
+    if (preload && typeof preload.readUserFile === 'function') {
+      try {
+        var fromPreload = preload.readUserFile(PLUGIN_ID, rel);
+        if (fromPreload) return fromPreload;
+      } catch (err) {
+        /* ignore */
+      }
+    }
+    if (window.BHChat && window.BHChat.plugins && typeof window.BHChat.plugins.readUserFile === 'function') {
+      try {
+        return window.BHChat.plugins.readUserFile(PLUGIN_ID, rel) || '';
+      } catch (err2) {
+        return '';
+      }
+    }
+    return '';
+  }
+
   function injectUserScript(rel) {
-    var api = window.bhchatPreload && window.bhchatPreload.plugins;
-    if (!api || typeof api.readUserFile !== 'function') return false;
-    var code = api.readUserFile(PLUGIN_ID, rel);
+    var code = readPluginFile(rel);
     if (!code) return false;
     var script = document.createElement('script');
     script.text = typeof code === 'string' ? code : String(code);
