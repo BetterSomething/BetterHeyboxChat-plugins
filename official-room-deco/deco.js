@@ -1,6 +1,6 @@
 /**
- * 官方房间背景 decorate payload。
- * 只负责拼请求体；不看 can_change_bg_pic / room_decorate 门闩。
+ * 官方房间背景 decorate payload，以及按工厂源码探测 decorate / 上传模块。
+ * 不看 can_change_bg_pic / room_decorate 门闩，不写死 webpack 数字 ID。
  */
 (function (root, factory) {
   var api = factory();
@@ -106,6 +106,119 @@
     return { ok: true };
   }
 
+  function factorySource(req, id) {
+    try {
+      return String((req && req.m && req.m[id]) || '');
+    } catch (err) {
+      return '';
+    }
+  }
+
+  function safeRequire(req, id) {
+    if (typeof req !== 'function' || id == null || id === '') return null;
+    try {
+      return req(id);
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function looksLikeRoomApi(mod) {
+    return !!(mod && typeof mod.DC === 'function');
+  }
+
+  function looksLikeUploader(mod) {
+    var up = mod && (mod.default || mod);
+    return !!(up && typeof up.uploadCustomFile === 'function');
+  }
+
+  function unwrapUploader(mod) {
+    if (!looksLikeUploader(mod)) return null;
+    return mod.default && typeof mod.default.uploadCustomFile === 'function' ? mod.default : mod;
+  }
+
+  function looksLikeRoomApiFactory(src) {
+    if (!src) return false;
+    return src.indexOf('/chatroom/v2/room/decorate') !== -1;
+  }
+
+  function looksLikeUploaderFactory(src) {
+    return !!(src && src.indexOf('uploadCustomFile') !== -1);
+  }
+
+  function eachFactoryId(req, visit) {
+    var factories = (req && req.m) || {};
+    var ids = Object.keys(factories);
+    for (var i = 0; i < ids.length; i++) {
+      if (visit(ids[i], factorySource(req, ids[i])) === true) return;
+    }
+  }
+
+  function findRoomApi(req) {
+    if (typeof req !== 'function') return null;
+    var found = null;
+    eachFactoryId(req, function (id, src) {
+      if (!looksLikeRoomApiFactory(src)) return;
+      var mod = safeRequire(req, id);
+      if (looksLikeRoomApi(mod)) {
+        found = mod;
+        return true;
+      }
+    });
+    return found;
+  }
+
+  function findUploaderModule(req) {
+    if (typeof req !== 'function') return null;
+    var found = null;
+    eachFactoryId(req, function (id, src) {
+      if (!looksLikeUploaderFactory(src)) return;
+      var mod = safeRequire(req, id);
+      if (looksLikeUploader(mod)) {
+        found = mod;
+        return true;
+      }
+    });
+    return found;
+  }
+
+  function discoverUploaderChunks(req) {
+    var chunks = [];
+    eachFactoryId(req, function (_id, src) {
+      if (src.indexOf('uploadCustomFile') === -1 && src.indexOf('room_deco_pic') === -1) return;
+      var re = /\.e\(\s*(\d+)\s*\)/g;
+      var match;
+      while ((match = re.exec(src))) {
+        if (chunks.indexOf(match[1]) === -1) chunks.push(match[1]);
+      }
+    });
+    return chunks;
+  }
+
+  function loadUploader(req) {
+    if (typeof req !== 'function') return Promise.resolve(null);
+    var ready = unwrapUploader(findUploaderModule(req));
+    if (ready) return Promise.resolve(ready);
+    var chunks = discoverUploaderChunks(req);
+    var chain = Promise.resolve();
+    for (var i = 0; i < chunks.length; i++) {
+      (function (chunkId) {
+        chain = chain.then(function () {
+          if (unwrapUploader(findUploaderModule(req))) return;
+          if (typeof req.e !== 'function') return;
+          return req.e(chunkId);
+        });
+      })(chunks[i]);
+    }
+    return chain
+      .then(function () {
+        return unwrapUploader(findUploaderModule(req));
+      })
+      .catch(function () {
+        return null;
+      });
+  }
+
   return {
     ROOM_DECORATE_CLOSE_ALL: ROOM_DECORATE_CLOSE_ALL,
     ROOM_DECORATE_OPEN_ALL: ROOM_DECORATE_OPEN_ALL,
@@ -115,5 +228,7 @@
     buildDecoratePayload: buildDecoratePayload,
     parseDecorateResult: parseDecorateResult,
     validateUploadFile: validateUploadFile,
+    findRoomApi: findRoomApi,
+    loadUploader: loadUploader,
   };
 });

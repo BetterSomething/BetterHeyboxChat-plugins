@@ -1,15 +1,13 @@
 /**
  * 探测官方房间背景写接口是否仍可用。
- * 复用客户端 webpack 模块 26737.DC 与 uploadCustomFile(source=room_deco_pic)，
+ * 按工厂源码找到 decorate / uploadCustomFile，不写死 webpack 数字 ID，
  * 不读 canChangeBgPic / room_decorate 门闩。
  */
 (function () {
   'use strict';
 
   var PLUGIN_ID = 'official-room-deco';
-  var ROOM_API_ID = 26737;
-  var UPLOADER_CHUNK = 7749;
-  var UPLOADER_ID = 57749;
+  var DECO_FILE = 'deco.js';
   var helpersCache = null;
 
   function createLocalHelpers() {
@@ -102,8 +100,45 @@
     };
   }
 
+  function readPluginFile(rel) {
+    var preload = window.bhchatPreload && window.bhchatPreload.plugins;
+    if (preload && typeof preload.readUserFile === 'function') {
+      try {
+        var fromPreload = preload.readUserFile(PLUGIN_ID, rel);
+        if (fromPreload) return fromPreload;
+      } catch (err) {
+        /* ignore */
+      }
+    }
+    if (window.BHChat && window.BHChat.plugins && typeof window.BHChat.plugins.readUserFile === 'function') {
+      try {
+        return window.BHChat.plugins.readUserFile(PLUGIN_ID, rel) || '';
+      } catch (err2) {
+        return '';
+      }
+    }
+    return '';
+  }
+
+  function injectUserScript(rel) {
+    var code = readPluginFile(rel);
+    if (!code) return false;
+    var script = document.createElement('script');
+    script.text = typeof code === 'string' ? code : String(code);
+    script.setAttribute('data-bhchat-plugin-file', PLUGIN_ID + '/' + rel);
+    document.head.appendChild(script);
+    return true;
+  }
+
   function getHelpers() {
     if (helpersCache) return helpersCache;
+    if (!window.BhchatOfficialRoomDeco) {
+      try {
+        injectUserScript(DECO_FILE);
+      } catch (err) {
+        /* 退回本地 helpers */
+      }
+    }
     if (window.BhchatOfficialRoomDeco) {
       helpersCache = window.BhchatOfficialRoomDeco;
       return helpersCache;
@@ -143,19 +178,17 @@
   }
 
   function getRoomApi() {
-    var req = getRequire();
-    if (!req) return null;
-    try {
-      return req(ROOM_API_ID);
-    } catch (err) {
-      return null;
+    var helpers = getHelpers();
+    if (helpers && typeof helpers.findRoomApi === 'function') {
+      return helpers.findRoomApi(getRequire());
     }
+    return null;
   }
 
   function decorateRoom(payload) {
     var api = getRoomApi();
     if (!api || typeof api.DC !== 'function') {
-      return Promise.reject(new Error('官方 decorate 模块未就绪（__bhchat_require__(26737).DC）'));
+      return Promise.reject(new Error('官方 decorate 模块未就绪'));
     }
     return api.DC({}, payload);
   }
@@ -171,17 +204,15 @@
 
   function uploadRoomDecoPic(file) {
     var req = getRequire();
-    if (!req || typeof req.e !== 'function') {
+    var helpers = getHelpers();
+    if (!req || !helpers || typeof helpers.loadUploader !== 'function') {
       return Promise.reject(new Error('官方上传模块未就绪'));
     }
     var ext = ((file.name && file.name.split('.').pop()) || 'jpg').toLowerCase();
     if (ext === 'jpeg') ext = 'jpg';
     if (file.type === 'image/png') ext = 'png';
     if (file.type === 'image/gif') ext = 'gif';
-    return req.e(UPLOADER_CHUNK).then(function () {
-      return req(UPLOADER_ID);
-    }).then(function (mod) {
-      var uploader = mod && (mod.default || mod);
+    return helpers.loadUploader(req).then(function (uploader) {
       if (!uploader || typeof uploader.uploadCustomFile !== 'function') {
         throw new Error('uploadCustomFile 不可用');
       }
