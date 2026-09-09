@@ -1,6 +1,6 @@
 # 开发调试 MCP
 
-给 Cursor Agent 用的本机桥：黑盒渲染进程开 `127.0.0.1` HTTP，MCP 再转过去。
+给 Agent 用的开发 MCP ：黑盒渲染进程开 `127.0.0.1` HTTP，MCP 再转过去。
 
 **只绑回环地址。** 内置 env / Vuex / storage 会打码 `pkey` / token；`heybox_eval` 是裸执行，不要用来导出登录态。
 
@@ -8,12 +8,12 @@
 
 1. 市场（或本地调试仓）安装 `heybox-dev-mcp`，重启黑盒。
 2. 右下角有 BHC 角标后，桥会写 `{dataRoot}/heybox-dev-mcp.json`（默认 `%APPDATA%\BetterHeyboxChat\`）。
-3. Cursor `mcp.json` 增加：
+3. `mcp.json` 增加：
 
 ```json
 "heybox-dev": {
   "command": "node",
-  "args": ["G:\\DevProject\\BetterHeyboxChat-plugins\\heybox-dev-mcp\\mcp-server.mjs"]
+  "args": ["...\\heybox-dev-mcp\\mcp-server.mjs"]
 }
 ```
 
@@ -29,7 +29,7 @@
 | `heybox_eval` / `heybox_eval_file` | 渲染进程执行 JS |
 | `heybox_env` | location / 版本 / `process.env`（已打码） |
 | `heybox_vuex` | `mapState` 或 `store.state` 路径 |
-| `heybox_webpack_require` / `_search` / `_ids` | 官方模块 |
+| `heybox_webpack_require` / `_search` / `_ids` | 官方模块（ID 随版本可能变；1.56 / 1.57 当前相同，不确定先 search） |
 | `heybox_dom` | `querySelectorAll` |
 | `heybox_console` / `heybox_network` | 挂钩后的最近日志 |
 | `heybox_plugins` / `heybox_storage` / `heybox_paths` | 运行时探查 |

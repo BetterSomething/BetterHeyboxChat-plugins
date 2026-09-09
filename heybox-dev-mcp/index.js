@@ -110,11 +110,35 @@
   function dataRoot() {
     try {
       var api = window.BHChat && window.BHChat.plugins;
-      if (api && typeof api.dataRoot === 'function') return api.dataRoot() || '';
+      if (api && typeof api.dataRoot === 'function') {
+        var fromApi = api.dataRoot();
+        if (fromApi) return fromApi;
+      }
     } catch (err) {
       /* ignore */
     }
+    try {
+      var preload = window.bhchatPreload && window.bhchatPreload.plugins;
+      if (preload && typeof preload.dataRoot === 'function') return preload.dataRoot() || '';
+    } catch (err2) {
+      /* ignore */
+    }
     return '';
+  }
+
+  function mcpServerPath() {
+    var pathMod = nodeRequire('path');
+    var fs = nodeRequire('fs');
+    var root = dataRoot();
+    if (!pathMod || !root) return '';
+    var file = pathMod.join(root, 'plugins', PLUGIN_ID, 'mcp-server.mjs');
+    if (fs && typeof fs.existsSync === 'function' && !fs.existsSync(file)) return '';
+    return file;
+  }
+
+  function formatMcpConfigSnippet(serverPath) {
+    if (!serverPath) return '';
+    return '"heybox-dev": {\n  "command": "node",\n  "args": [' + JSON.stringify(serverPath) + ']\n}';
   }
 
   function handshakePath() {
@@ -497,9 +521,13 @@
           }
         },
         onCopyConfig: function () {
-          var snippet =
-            '"heybox-dev": {\n  "command": "node",\n  "args": ["G:\\\\DevProject\\\\BetterHeyboxChat-plugins\\\\heybox-dev-mcp\\\\mcp-server.mjs"]\n}';
           var self = this;
+          var serverPath = mcpServerPath();
+          var snippet = formatMcpConfigSnippet(serverPath);
+          if (!snippet) {
+            self.status = '未找到已安装的 mcp-server.mjs';
+            return;
+          }
           copyText(snippet).then(function () {
             self.status = '已复制 Cursor mcp.json 片段（token 仍只在握手文件里）';
           });

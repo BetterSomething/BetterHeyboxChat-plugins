@@ -1,7 +1,7 @@
 {
   "id": "heybox-dev-mcp",
   "name": "开发调试 MCP",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "AwCat",
   "repository": "https://github.com/BetterSomething/BetterHeyboxChat-plugins",
   "desc": "本机调试桥：Cursor Agent 经 localhost 在渲染进程执行 JS、读 Vuex/webpack",
