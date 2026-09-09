@@ -1,0 +1,13 @@
+{
+  "id": "heybox-bbs",
+  "name": "社区功能补全",
+  "version": "1.1.1",
+  "author": "AwCat",
+  "repository": "https://github.com/BetterSomething/BetterHeyboxChat-plugins",
+  "desc": "电脑上也能刷小黑盒！为客户端增加社区主页",
+  "minClientVersion": "1.56.0",
+  "enabled": true,
+  "entry": "index.js",
+  "style": "style.css",
+  "files": ["extract.js"]
+}
