@@ -16,6 +16,7 @@ BHC 从本仓拉取 `registry.json`，用户点安装后再下载对应插件文
 | `export-credentials` | 用户凭据导出 |
 | `heybox-dev-mcp` | 开发调试 MCP |
 | `heybox-bbs` | 客户端社区功能补全 |
+| `perf-tune` | 内存优化 |
 
 ## 投稿
 

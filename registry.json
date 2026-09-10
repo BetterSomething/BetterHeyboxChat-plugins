@@ -72,6 +72,14 @@
       "author": "AwCat",
       "desc": "电脑上也能刷小黑盒！为客户端增加社区主页",
       "minClientVersion": "1.56.0"
+    },
+    {
+      "id": "perf-tune",
+      "name": "内存优化",
+      "version": "1.0.3",
+      "author": "AwCat",
+      "desc": "在尽量不影响正常功能的情况下三挡优化内存",
+      "minClientVersion": "1.56.0"
     }
   ]
 }

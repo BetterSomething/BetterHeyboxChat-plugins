@@ -1,0 +1,11 @@
+{
+  "id": "perf-tune",
+  "name": "内存优化",
+  "version": "1.0.3",
+  "author": "AwCat",
+  "repository": "https://github.com/BetterSomething/BetterHeyboxChat-plugins",
+  "desc": "在尽量不影响正常功能的情况下三挡优化内存",
+  "minClientVersion": "1.56.0",
+  "enabled": true,
+  "entry": "index.js"
+}
