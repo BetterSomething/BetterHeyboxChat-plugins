@@ -9,7 +9,7 @@ BHC 从本仓拉取 `registry.json`，用户点安装后再下载对应插件文
 | --- | --- |
 | `custom-room-bg` | 自定义房间背景 |
 | `channel-tts` | 频道文字消息 TTS |
-| `laughter-fav-fix` | 语音包收藏显示修复 |
+| `misc-fix` | 杂项修复（语音包收藏刷新、设备列表溢出） |
 | `screen-share-danmaku` | 屏幕共享增强 |
 | `block-update` | 屏蔽客户端更新 |
 | `official-room-deco` | 强制上传房间自定义背景 |

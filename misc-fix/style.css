@@ -1,0 +1,36 @@
+/* 左下角输入/输出设备菜单：设备很多时限制高度，列表滚动，底部开关和音量留在视口内 */
+html.bhchat-misc-audio-list .cpt-popover-wrapper.operation-setting:not(.ai-denoiser-setting) {
+  max-height: calc(100vh - 58px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+html.bhchat-misc-audio-list .cpt-popover-wrapper.operation-setting:not(.ai-denoiser-setting) > .block:first-child {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+html.bhchat-misc-audio-list .cpt-popover-wrapper.operation-setting:not(.ai-denoiser-setting) > .block:first-child > .title {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--fill-popover);
+}
+
+html.bhchat-misc-audio-list .cpt-popover-wrapper.operation-setting:not(.ai-denoiser-setting) > .block:not(:first-child) {
+  flex: 0 0 auto;
+}
+
+html.bhchat-misc-audio-list .cpt-popover-wrapper.operation-setting:not(.ai-denoiser-setting) > .block:first-child::-webkit-scrollbar {
+  width: 6px;
+}
+
+html.bhchat-misc-audio-list .cpt-popover-wrapper.operation-setting:not(.ai-denoiser-setting) > .block:first-child::-webkit-scrollbar-thumb {
+  background: var(--opacity-2);
+  border-radius: 3px;
+}

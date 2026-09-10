@@ -1,25 +1,29 @@
 /**
- * 语音包收藏显示修复：频道内收藏/取消收藏他人播放的语音包后，同步刷新收藏列表。
+ * 杂项修复：
+ * 1. 语音包收藏显示修复（原 laughter-fav-fix）
+ * 2. 输入/输出设备过多时，左下角设备菜单限制高度并可滚动
  *
  * 官方语音包平台收藏会 $emit('Refresh_User_Laughter')，由主界面 handleRefreshUserLaughter
- * 重新拉取 voice_packs 并 SET_VOICE_PACKS_MAP / SET_LAUGHTER_FLATTEN_LIST。
- * 频道 IM 右键收藏（addLaughterToFavorite）只 commit SET_FAVORITE_VOICE_PACK_IDS，
- * 收藏 ID 变了，列表不会重拉。本插件在收藏与取消收藏后补发同一事件，不伪造协议。
+ * 重新拉取 voice_packs。频道 IM 右键收藏只 commit SET_FAVORITE_VOICE_PACK_IDS，
+ * 本插件在收藏与取消收藏后补发同一事件，不伪造协议。
  */
 (function () {
   'use strict';
 
-  var PLUGIN_ID = 'laughter-fav-fix';
+  var PLUGIN_ID = 'misc-fix';
   var STORAGE_KEY = 'settings';
+  var AUDIO_CLASS = 'bhchat-misc-audio-list';
   var OFFICIAL_REFRESH_EVENT = 'Refresh_User_Laughter';
   var FAVORITE_IDS_MUTATION = 'SET_FAVORITE_VOICE_PACK_IDS';
 
   var DEFAULTS = {
-    enabled: true,
+    laughterFav: true,
+    audioDeviceList: true,
   };
 
   var settings = {
-    enabled: DEFAULTS.enabled,
+    laughterFav: DEFAULTS.laughterFav,
+    audioDeviceList: DEFAULTS.audioDeviceList,
   };
 
   var storeNs = null;
@@ -48,23 +52,57 @@
     return storeNs;
   }
 
+  function applySettings(saved) {
+    saved = saved && typeof saved === 'object' ? saved : {};
+    var laughter =
+      saved.laughterFav !== undefined ? saved.laughterFav : saved.enabled;
+    settings = {
+      laughterFav: laughter !== false,
+      audioDeviceList: saved.audioDeviceList !== false,
+    };
+    return settings;
+  }
+
   function loadSettings() {
     var ns = getNs();
     if (!ns) {
-      settings = { enabled: DEFAULTS.enabled };
+      settings = { laughterFav: DEFAULTS.laughterFav, audioDeviceList: DEFAULTS.audioDeviceList };
       return Promise.resolve(settings);
     }
     return ns.get(STORAGE_KEY).then(function (saved) {
-      saved = saved && typeof saved === 'object' ? saved : {};
-      settings = { enabled: saved.enabled !== false };
-      return settings;
+      if (saved && typeof saved === 'object') {
+        applySettings(saved);
+        return settings;
+      }
+      var oldNs =
+        window.BHChat && window.BHChat.storage && window.BHChat.storage.ns
+          ? window.BHChat.storage.ns('laughter-fav-fix')
+          : null;
+      if (!oldNs || typeof oldNs.get !== 'function') {
+        applySettings({});
+        return settings;
+      }
+      return oldNs.get(STORAGE_KEY).then(function (oldSaved) {
+        applySettings(oldSaved && typeof oldSaved === 'object' ? oldSaved : {});
+        return settings;
+      });
     });
   }
 
   function saveSettings() {
     var ns = getNs();
     if (!ns) return Promise.resolve();
-    return ns.set(STORAGE_KEY, { enabled: !!settings.enabled });
+    return ns.set(STORAGE_KEY, {
+      laughterFav: !!settings.laughterFav,
+      audioDeviceList: !!settings.audioDeviceList,
+    });
+  }
+
+  function applyAudioListFix() {
+    var root = document.documentElement;
+    if (!root || !root.classList) return;
+    if (settings.audioDeviceList) root.classList.add(AUDIO_CLASS);
+    else root.classList.remove(AUDIO_CLASS);
   }
 
   function getStore() {
@@ -176,7 +214,7 @@
   function refreshLists(reason, opts) {
     opts = opts || {};
     var force = !!opts.force;
-    if (!force && !settings.enabled) return;
+    if (!force && !settings.laughterFav) return;
     if (refreshing) return;
     refreshing = true;
     lastRefreshAt = Date.now();
@@ -191,7 +229,7 @@
   }
 
   function scheduleRefresh(reason) {
-    if (!settings.enabled) return;
+    if (!settings.laughterFav) return;
     if (isFavoriteIdsMutation(String(reason || '').split(':').pop()) && Date.now() < ignoreFavoriteUntil) {
       return;
     }
@@ -213,7 +251,7 @@
       store.dispatch = function (type) {
         var name = nameOf(type);
         var ret = origDispatch.apply(store, arguments);
-        if (settings.enabled && isCollectOrUncollectName(name)) {
+        if (settings.laughterFav && isCollectOrUncollectName(name)) {
           Promise.resolve(ret)
             .then(function () {
               scheduleRefresh('vuex-dispatch:' + name);
@@ -229,7 +267,7 @@
       store.commit = function (type) {
         var name = nameOf(type);
         var ret = origCommit.apply(store, arguments);
-        if (settings.enabled && isCollectOrUncollectName(name)) {
+        if (settings.laughterFav && isCollectOrUncollectName(name)) {
           scheduleRefresh('vuex-commit:' + name);
         }
         return ret;
@@ -239,7 +277,7 @@
     if (typeof store.subscribe === 'function' && !storeUnsub) {
       storeUnsub = store.subscribe(function (mutation) {
         var name = mutation && mutation.type ? mutation.type : '';
-        if (settings.enabled && isCollectOrUncollectName(name)) {
+        if (settings.laughterFav && isCollectOrUncollectName(name)) {
           scheduleRefresh('vuex-sub:' + name);
         }
       });
@@ -254,7 +292,7 @@
       bus.$emit = function (event) {
         var name = nameOf(event);
         var ret = origEmit.apply(bus, arguments);
-        if (settings.enabled && isCollectOrUncollectName(name) && !isOfficialRefreshEvent(name)) {
+        if (settings.laughterFav && isCollectOrUncollectName(name) && !isOfficialRefreshEvent(name)) {
           scheduleRefresh('bus:' + name);
         }
         return ret;
@@ -274,7 +312,7 @@
         if (init && init.method) method = init.method;
         else if (input && input.method) method = input.method;
         return origFetch.apply(window, arguments).then(function (res) {
-          if (settings.enabled && res && res.ok && isCollectPostUrl(url, method)) {
+          if (settings.laughterFav && res && res.ok && isCollectPostUrl(url, method)) {
             scheduleRefresh('fetch');
           }
           return res;
@@ -294,7 +332,7 @@
         var xhr = this;
         xhr.addEventListener('load', function () {
           if (
-            settings.enabled &&
+            settings.laughterFav &&
             xhr.status >= 200 &&
             xhr.status < 300 &&
             isCollectPostUrl(xhr.__bhchat_laughter_url, xhr.__bhchat_laughter_method)
@@ -339,9 +377,8 @@
     }, 500);
   }
 
-  function registerApi() {
-    if (!window.BHChat) return;
-    window.BHChat.laughterFav = {
+  function laughterApi() {
+    return {
       refresh: function () {
         refreshLists('manual', { force: true });
       },
@@ -349,17 +386,69 @@
         return lastStatus;
       },
       getSettings: function () {
-        return { enabled: !!settings.enabled };
+        return { enabled: !!settings.laughterFav };
       },
     };
   }
 
+  function registerApi() {
+    if (!window.BHChat) return;
+    window.BHChat.laughterFav = laughterApi();
+    window.BHChat.miscFix = {
+      getSettings: function () {
+        return {
+          laughterFav: !!settings.laughterFav,
+          audioDeviceList: !!settings.audioDeviceList,
+        };
+      },
+      getStatus: function () {
+        return lastStatus;
+      },
+      refreshLaughter: function () {
+        refreshLists('manual', { force: true });
+      },
+    };
+  }
+
+  function toggleRow(h, label, on, onClick) {
+    return h(
+      'div',
+      {
+        class: 'row bhchat-row-click',
+        on: { click: onClick },
+      },
+      [
+        h('span', label),
+        h('span', { class: { 'bhchat-switch': true, on: !!on } }, [
+          h('span', { class: 'bhchat-switch-core' }),
+        ]),
+      ],
+    );
+  }
+
+  function actionBtn(h, text, kind, onClick) {
+    return h(
+      'button',
+      {
+        class: {
+          'bhchat-btn': true,
+          'bhchat-btn-primary': kind === 'primary',
+          'bhchat-btn-secondary': kind === 'secondary',
+        },
+        attrs: { type: 'button' },
+        on: { click: onClick },
+      },
+      text,
+    );
+  }
+
   function buildPanelComponent() {
     return {
-      name: 'BhchatLaughterFavFixPanel',
+      name: 'BhchatMiscFixPanel',
       data: function () {
         return {
-          enabled: settings.enabled,
+          laughterFav: settings.laughterFav,
+          audioDeviceList: settings.audioDeviceList,
           status: lastStatus,
         };
       },
@@ -375,15 +464,22 @@
       },
       methods: {
         syncFromPlugin: function () {
-          this.enabled = settings.enabled;
+          this.laughterFav = settings.laughterFav;
+          this.audioDeviceList = settings.audioDeviceList;
           this.status = lastStatus;
         },
         persist: function () {
-          settings.enabled = !!this.enabled;
+          settings.laughterFav = !!this.laughterFav;
+          settings.audioDeviceList = !!this.audioDeviceList;
+          applyAudioListFix();
           saveSettings();
         },
-        onToggle: function () {
-          this.enabled = !this.enabled;
+        onToggleLaughter: function () {
+          this.laughterFav = !this.laughterFav;
+          this.persist();
+        },
+        onToggleAudio: function () {
+          this.audioDeviceList = !this.audioDeviceList;
           this.persist();
         },
         onRefresh: function () {
@@ -392,42 +488,24 @@
         },
       },
       render: function (h) {
-        function btn(text, kind, onClick) {
-          return h(
-            'button',
-            {
-              class: {
-                'bhchat-btn': true,
-                'bhchat-btn-primary': kind === 'primary',
-                'bhchat-btn-secondary': kind === 'secondary',
-              },
-              attrs: { type: 'button' },
-              on: { click: onClick },
-            },
-            text,
-          );
-        }
         return h('div', [
           h('div', { class: 'cell-title' }, '语音包收藏显示修复'),
           h('div', { class: 'bhchat-list' }, [
-            h(
-              'div',
-              {
-                class: 'row bhchat-row-click',
-                on: { click: this.onToggle },
-              },
-              [
-                h('span', '收藏或取消收藏后立即刷新列表'),
-                h('span', { class: { 'bhchat-switch': true, on: !!this.enabled } }, [
-                  h('span', { class: 'bhchat-switch-core' }),
-                ]),
-              ],
-            ),
+            toggleRow(h, '收藏或取消收藏后立即刷新列表', this.laughterFav, this.onToggleLaughter),
           ]),
           h('p', { class: 'bhchat-hint' }, this.status),
           h('div', { class: 'bhchat-actions' }, [
-            btn('立即刷新收藏列表', 'primary', this.onRefresh),
+            actionBtn(h, '立即刷新收藏列表', 'primary', this.onRefresh),
           ]),
+          h('div', { class: 'cell-title' }, '音频设备列表'),
+          h('div', { class: 'bhchat-list' }, [
+            toggleRow(h, '设备过多时限制菜单高度并可滚动', this.audioDeviceList, this.onToggleAudio),
+          ]),
+          h(
+            'p',
+            { class: 'bhchat-hint' },
+            '左下角输入/输出设备菜单不再撑出窗口，按键说话和音量会留在下面。',
+          ),
         ]);
       },
     };
@@ -437,21 +515,22 @@
     if (!window.BHChat || !window.BHChat.registerPanel) return;
     window.BHChat.registerPanel({
       id: PLUGIN_ID,
-      title: '语音包收藏显示修复',
+      title: '杂项修复',
       component: buildPanelComponent(),
     });
   }
 
   function activate() {
     loadSettings().then(function () {
+      applyAudioListFix();
       registerApi();
       registerPanel();
       startHook();
-      console.log('[BetterHeyboxChat] laughter-fav-fix plugin activated');
+      console.log('[BetterHeyboxChat] misc-fix plugin activated');
     });
   }
 
-  if (window.BHChat) {
+  if (window.BHChat && window.BHChat.onReady) {
     window.BHChat.onReady(activate);
   }
 })();

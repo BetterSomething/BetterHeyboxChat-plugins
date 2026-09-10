@@ -18,11 +18,11 @@
       "minClientVersion": "1.56.0"
     },
     {
-      "id": "laughter-fav-fix",
-      "name": "语音包收藏显示修复",
-      "version": "1.0.1",
+      "id": "misc-fix",
+      "name": "杂项修复",
+      "version": "1.0.0",
       "author": "AwCat",
-      "desc": "在频道内收藏或取消收藏语音包后，立即刷新收藏列表",
+      "desc": "语音包收藏后刷新列表；输入输出设备过多时菜单可滚动，不再被裁切",
       "minClientVersion": "1.56.0"
     },
     {
