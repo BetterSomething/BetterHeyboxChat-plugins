@@ -2,6 +2,7 @@
  * 杂项修复：
  * 1. 语音包收藏显示修复（原 laughter-fav-fix）
  * 2. 输入/输出设备过多时，左下角设备菜单限制高度并可滚动
+ * 3. 官方发评补上服务端新要求的 query `_rnd`（web 同款 HMAC，不改 body）
  *
  * 官方语音包平台收藏会 $emit('Refresh_User_Laughter')，由主界面 handleRefreshUserLaughter
  * 重新拉取 voice_packs。频道 IM 右键收藏只 commit SET_FAVORITE_VOICE_PACK_IDS，
@@ -19,12 +20,19 @@
   var DEFAULTS = {
     laughterFav: true,
     audioDeviceList: true,
+    commentRnd: true,
   };
 
   var settings = {
     laughterFav: DEFAULTS.laughterFav,
     audioDeviceList: DEFAULTS.audioDeviceList,
+    commentRnd: DEFAULTS.commentRnd,
   };
+
+  var COMMENT_CREATE_RE = /\/bbs\/app\/comment\/create(?:\?|#|$)/i;
+  var COMMENT_RND_KEY = 'Z7mFG4tQp9Ws2LxB8H';
+  var lastCommentStatus = '等待发评…';
+  var nodeCrypto = null;
 
   var storeNs = null;
   var hooked = false;
@@ -59,6 +67,7 @@
     settings = {
       laughterFav: laughter !== false,
       audioDeviceList: saved.audioDeviceList !== false,
+      commentRnd: saved.commentRnd !== false,
     };
     return settings;
   }
@@ -66,7 +75,11 @@
   function loadSettings() {
     var ns = getNs();
     if (!ns) {
-      settings = { laughterFav: DEFAULTS.laughterFav, audioDeviceList: DEFAULTS.audioDeviceList };
+      settings = {
+        laughterFav: DEFAULTS.laughterFav,
+        audioDeviceList: DEFAULTS.audioDeviceList,
+        commentRnd: DEFAULTS.commentRnd,
+      };
       return Promise.resolve(settings);
     }
     return ns.get(STORAGE_KEY).then(function (saved) {
@@ -95,6 +108,7 @@
     return ns.set(STORAGE_KEY, {
       laughterFav: !!settings.laughterFav,
       audioDeviceList: !!settings.audioDeviceList,
+      commentRnd: !!settings.commentRnd,
     });
   }
 
@@ -301,17 +315,74 @@
     }
   }
 
+  function getNodeCrypto() {
+    if (nodeCrypto) return nodeCrypto;
+    try {
+      if (typeof require === 'function') {
+        var crypto = require('crypto');
+        if (crypto && typeof crypto.createHmac === 'function') {
+          nodeCrypto = crypto;
+          return nodeCrypto;
+        }
+      }
+    } catch (err) {}
+    return null;
+  }
+
+  function signCommentRnd(nonce, time) {
+    var crypto = getNodeCrypto();
+    if (!crypto) return '';
+    var msg = COMMENT_RND_KEY + String(nonce) + String(time) + ':' + String(nonce);
+    return crypto.createHmac('sha256', COMMENT_RND_KEY).update(msg, 'utf8').digest('hex');
+  }
+
+  function isCommentCreateUrl(url) {
+    return COMMENT_CREATE_RE.test(String(url || ''));
+  }
+
+  function withCommentRnd(url) {
+    var raw = String(url || '');
+    if (!raw || !settings.commentRnd || !isCommentCreateUrl(raw)) return raw;
+    if (/(?:^|[?&])_rnd=/.test(raw)) return raw;
+    var nonce = '';
+    var time = '';
+    try {
+      var parsed = new URL(raw, 'https://api.xiaoheihe.cn');
+      nonce = parsed.searchParams.get('nonce') || '';
+      time = parsed.searchParams.get('_time') || '';
+    } catch (err) {
+      return raw;
+    }
+    if (!nonce || !time) {
+      lastCommentStatus = '评论请求缺少 nonce/_time，未补签名';
+      return raw;
+    }
+    var hex = signCommentRnd(nonce, time);
+    if (!hex) {
+      lastCommentStatus = '当前环境没有 crypto，无法补签名';
+      return raw;
+    }
+    lastCommentStatus = '已为评论请求补上签名';
+    var sep = raw.indexOf('?') >= 0 ? '&' : '?';
+    return raw + sep + '_rnd=' + encodeURIComponent('15:' + hex);
+  }
+
   function wrapNetwork() {
     if (typeof window.fetch === 'function' && !window.fetch.__bhchat_laughter) {
       origFetch = window.fetch.bind(window);
       window.fetch = function (input, init) {
         var url = '';
         var method = 'GET';
-        if (typeof input === 'string') url = input;
-        else if (input && input.url) url = input.url;
+        if (typeof input === 'string') {
+          url = withCommentRnd(input);
+          if (url !== input) input = url;
+        } else if (input && input.url) {
+          url = withCommentRnd(input.url);
+          if (url !== input.url) input = url;
+        }
         if (init && init.method) method = init.method;
         else if (input && input.method) method = input.method;
-        return origFetch.apply(window, arguments).then(function (res) {
+        return origFetch.call(window, input, init).then(function (res) {
           if (settings.laughterFav && res && res.ok && isCollectPostUrl(url, method)) {
             scheduleRefresh('fetch');
           }
@@ -324,8 +395,10 @@
       origXhrOpen = XMLHttpRequest.prototype.open;
       origXhrSend = XMLHttpRequest.prototype.send;
       XMLHttpRequest.prototype.open = function (method, url) {
+        var nextUrl = settings.commentRnd ? withCommentRnd(url) : url;
         this.__bhchat_laughter_method = method;
-        this.__bhchat_laughter_url = url;
+        this.__bhchat_laughter_url = nextUrl;
+        if (arguments.length >= 2 && nextUrl !== url) arguments[1] = nextUrl;
         return origXhrOpen.apply(this, arguments);
       };
       XMLHttpRequest.prototype.send = function () {
@@ -399,10 +472,14 @@
         return {
           laughterFav: !!settings.laughterFav,
           audioDeviceList: !!settings.audioDeviceList,
+          commentRnd: !!settings.commentRnd,
         };
       },
       getStatus: function () {
         return lastStatus;
+      },
+      getCommentStatus: function () {
+        return lastCommentStatus;
       },
       refreshLaughter: function () {
         refreshLists('manual', { force: true });
@@ -449,7 +526,9 @@
         return {
           laughterFav: settings.laughterFav,
           audioDeviceList: settings.audioDeviceList,
+          commentRnd: settings.commentRnd,
           status: lastStatus,
+          commentStatus: lastCommentStatus,
         };
       },
       mounted: function () {
@@ -457,6 +536,7 @@
         this.syncFromPlugin();
         this._timer = setInterval(function () {
           self.status = lastStatus;
+          self.commentStatus = lastCommentStatus;
         }, 800);
       },
       beforeDestroy: function () {
@@ -466,11 +546,14 @@
         syncFromPlugin: function () {
           this.laughterFav = settings.laughterFav;
           this.audioDeviceList = settings.audioDeviceList;
+          this.commentRnd = settings.commentRnd;
           this.status = lastStatus;
+          this.commentStatus = lastCommentStatus;
         },
         persist: function () {
           settings.laughterFav = !!this.laughterFav;
           settings.audioDeviceList = !!this.audioDeviceList;
+          settings.commentRnd = !!this.commentRnd;
           applyAudioListFix();
           saveSettings();
         },
@@ -480,6 +563,10 @@
         },
         onToggleAudio: function () {
           this.audioDeviceList = !this.audioDeviceList;
+          this.persist();
+        },
+        onToggleCommentRnd: function () {
+          this.commentRnd = !this.commentRnd;
           this.persist();
         },
         onRefresh: function () {
@@ -506,6 +593,16 @@
             { class: 'bhchat-hint' },
             '左下角输入/输出设备菜单不再撑出窗口，按键说话和音量会留在下面。',
           ),
+          h('div', { class: 'cell-title' }, '官方评论'),
+          h('div', { class: 'bhchat-list' }, [
+            toggleRow(h, '发评时补上服务端要求的签名', this.commentRnd, this.onToggleCommentRnd),
+          ]),
+          h(
+            'p',
+            { class: 'bhchat-hint' },
+            '桌面发评缺 query _rnd 会提示「缺失参数」。只改签名，不改正文。',
+          ),
+          h('p', { class: 'bhchat-hint' }, this.commentStatus),
         ]);
       },
     };
