@@ -193,13 +193,28 @@
     return api.DC({}, payload);
   }
 
+  /**
+   * 读取当前房间「已应用」的装饰。
+   * 1.58.0 及更早：官方 decorate 模块导出 lI（GET /chatroom/v2/room/decorate/applying）。
+   * 1.59.0 起官方删掉了 lI，接口也不再出现在客户端里；此时降级为读房间状态里的 bg_pic，
+   * 并带上 degraded 标记，调用方据此区分「服务端原样返回」与「本地近似值」。
+   */
   function fetchApplying() {
-    var api = getRoomApi();
-    if (!api || typeof api.lI !== 'function') {
-      return Promise.reject(new Error('官方 decorate/applying 模块未就绪'));
-    }
     var room = getCurrentRoom();
-    return api.lI({ room_id: room && room.room_id });
+    var api = getRoomApi();
+    if (api && typeof api.lI === 'function') {
+      return api.lI({ room_id: room && room.room_id });
+    }
+    return Promise.resolve({
+      degraded: true,
+      reason: '该客户端版本的官方 decorate 模块没有 lI（1.59.0 起移除），已降级为本地房间状态',
+      status: room ? 'ok' : 'error',
+      room_id: room && room.room_id ? String(room.room_id) : '',
+      bg_pic: (room && room.bg_pic) || '',
+      bg_pic_main_color: (room && room.bg_pic_main_color) || '',
+      bar_color: (room && room.bar_color) || '',
+      can_change_bg_pic: !!(room && room.can_change_bg_pic),
+    });
   }
 
   function uploadRoomDecoPic(file) {
