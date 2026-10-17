@@ -47,6 +47,73 @@
       });
   }
 
+  var OFFICIAL_QUERY_KEYS = [
+    'x_os_type',
+    'device_info',
+    'electron_version',
+    'chat_exe_version',
+    'chat_version',
+    'client_bit',
+    'win_version',
+  ];
+  var officialQueryCache = null;
+
+  function readOfficialQuery() {
+    if (officialQueryCache) return officialQueryCache;
+    var req = window.__bhchat_require__;
+    if (typeof req !== 'function') return {};
+    var factories = req.m;
+    if (!factories || typeof factories !== 'object') return {};
+    var ids = Object.keys(factories);
+    for (var i = 0; i < ids.length; i++) {
+      var src = '';
+      try {
+        src = String(factories[ids[i]] || '');
+      } catch (err) {
+        src = '';
+      }
+      if (src.indexOf('heybox_chat') === -1 || src.indexOf('x_os_type') === -1) continue;
+      var mod = null;
+      try {
+        mod = req(ids[i]);
+      } catch (err2) {
+        continue;
+      }
+      if (!mod || typeof mod !== 'object') continue;
+      var keys = [];
+      try {
+        keys = Object.keys(mod);
+      } catch (err3) {
+        continue;
+      }
+      for (var j = 0; j < keys.length; j++) {
+        var v = null;
+        try {
+          v = mod[keys[j]];
+        } catch (err4) {
+          continue;
+        }
+        if (v && typeof v === 'object' && v.client_type === 'heybox_chat' && 'x_os_type' in v) {
+          var out = {};
+          for (var k = 0; k < OFFICIAL_QUERY_KEYS.length; k++) {
+            var name = OFFICIAL_QUERY_KEYS[k];
+            if (name in v) out[name] = v[name];
+          }
+          officialQueryCache = out;
+          return officialQueryCache;
+        }
+      }
+    }
+    return {};
+  }
+
+  function readElectronVersion() {
+    if (typeof process !== 'undefined' && process.versions && process.versions.electron) {
+      return String(process.versions.electron);
+    }
+    return '';
+  }
+
   function readClientVersion() {
     var api = window.electronAPI;
     if (!api || typeof api.getClientVersion !== 'function') return Promise.resolve('');
@@ -76,6 +143,8 @@
         sessionCookies: parts[0] || [],
         documentCookie: typeof document !== 'undefined' ? document.cookie : '',
         clientVersion: parts[1] || '',
+        officialQuery: readOfficialQuery(),
+        electronVersion: readElectronVersion(),
       });
     });
   }

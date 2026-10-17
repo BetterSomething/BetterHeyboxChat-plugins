@@ -188,6 +188,7 @@
     var ls = input.localStorage && typeof input.localStorage === 'object' ? input.localStorage : {};
     var win = input.window && typeof input.window === 'object' ? input.window : {};
     var userInfo = input.userInfo && typeof input.userInfo === 'object' ? input.userInfo : {};
+    var official = input.officialQuery && typeof input.officialQuery === 'object' ? input.officialQuery : {};
     var cookies = mergeCookies(input.sessionCookies, input.documentCookie);
     var heyboxId = firstNonEmpty(ls.heybox_id, userInfo.user_id, win.heybox_id);
     var pkey = firstNonEmpty(ls.pkey, win.pkey, cookieValueByName(cookies, ['user_pkey', 'pkey']));
@@ -197,17 +198,17 @@
       client_type: FIXED_QUERY.client_type,
       x_client_type: FIXED_QUERY.x_client_type,
       os_type: FIXED_QUERY.os_type,
-      x_os_type: firstNonEmpty(win.x_os_type, input.xOsType),
-      device_info: firstNonEmpty(win.device_info, input.deviceInfo),
+      x_os_type: firstNonEmpty(win.x_os_type, official.x_os_type, input.xOsType),
+      device_info: firstNonEmpty(win.device_info, official.device_info, input.deviceInfo),
       x_app: FIXED_QUERY.x_app,
       version: firstNonEmpty(win.app_version, FIXED_QUERY.version),
       web_version: firstNonEmpty(win.web_version, FIXED_QUERY.web_version),
       chat_os_type: FIXED_QUERY.chat_os_type,
-      chat_version: firstNonEmpty(win.asar_version, input.chatVersion),
-      chat_exe_version: firstNonEmpty(win.chat_exe_version, input.clientVersion),
-      electron_version: firstNonEmpty(win.electron_version, input.electronVersion),
-      client_bit: firstNonEmpty(win.exe_bit, win.client_bit),
-      win_version: firstNonEmpty(win.windows_version, win.win_version),
+      chat_version: firstNonEmpty(win.asar_version, official.chat_version, input.chatVersion),
+      chat_exe_version: firstNonEmpty(win.chat_exe_version, official.chat_exe_version, input.clientVersion),
+      electron_version: firstNonEmpty(win.electron_version, official.electron_version, input.electronVersion),
+      client_bit: firstNonEmpty(win.exe_bit, win.client_bit, official.client_bit),
+      win_version: firstNonEmpty(win.windows_version, win.win_version, official.win_version),
     };
     var cookieHeader = toCookieHeader(cookies);
     var missing = [];
