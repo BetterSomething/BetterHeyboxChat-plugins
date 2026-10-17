@@ -7,11 +7,11 @@
 
   var PLUGIN_ID = 'perf-tune';
   var STORAGE_KEY = 'settings';
-  var LIGHT_INTERVAL_MS = 5 * 60 * 1000;
+  var LIGHT_INTERVAL_MS = 10 * 60 * 1000;
   var POLL_MS = 10 * 1000;
   var IDLE_B_MS = 5 * 60 * 1000;
   var IDLE_C_MS = 2 * 60 * 1000;
-  var TRIM_GAP_MS = 60 * 1000;
+  var TRIM_GAP_MS = 30 * 60 * 1000;
   var MEM_POLL_MS = 2000;
   var MEM_BADGE_ID = 'bhchat-perf-mem';
   var OFFICIAL_CACHE_DEFAULT = {
@@ -30,7 +30,9 @@
   var lastLightAt = 0;
   var lastTrimAt = 0;
   var lastInputAt = Date.now();
-  var lastHidden = false;
+  var lastBackground = false;
+  var trimmedThisIdle = false;
+  var officialCacheApi = null;
   var pollTimer = null;
   var storeNs = null;
   var uncertain = false;
@@ -95,23 +97,46 @@
     return window.BHChat.mapState(keys) || {};
   }
 
+  function isOfficialCacheApi(api) {
+    return !!(
+      api &&
+      typeof api.setLimit === 'function' &&
+      typeof api.getLimit === 'function' &&
+      api.cache_limit &&
+      typeof api.cache_limit === 'object'
+    );
+  }
+
   function findOfficialCacheApi() {
+    if (isOfficialCacheApi(officialCacheApi)) return officialCacheApi;
+    officialCacheApi = null;
     var req = window.__bhchat_require__;
-    if (typeof req !== 'function') return null;
-    var installed = req.c;
-    if (!installed || typeof installed !== 'object') return null;
-    var ids = Object.keys(installed);
+    if (typeof req !== 'function' || !req.m || typeof req.m !== 'object') return null;
+    var ids = Object.keys(req.m);
     for (var i = 0; i < ids.length; i++) {
-      var exp = installed[ids[i]] && installed[ids[i]].exports;
-      var api = exp && (exp.A || exp.default || exp);
+      var src = '';
+      try {
+        src = String(req.m[ids[i]] || '');
+      } catch (err) {
+        src = '';
+      }
       if (
-        api &&
-        typeof api.setLimit === 'function' &&
-        typeof api.getLimit === 'function' &&
-        api.cache_limit &&
-        typeof api.cache_limit === 'object'
+        src.indexOf('cache_limit') === -1 ||
+        src.indexOf('setLimit') === -1 ||
+        src.indexOf('getLimit') === -1
       ) {
-        return api;
+        continue;
+      }
+      var mod = null;
+      try {
+        mod = req(ids[i]);
+      } catch (err2) {
+        continue;
+      }
+      var api = mod && (mod.A || mod.default || mod);
+      if (isOfficialCacheApi(api)) {
+        officialCacheApi = api;
+        return officialCacheApi;
       }
     }
     return null;
@@ -158,6 +183,7 @@
 
   function markInput() {
     lastInputAt = Date.now();
+    trimmedThisIdle = false;
   }
 
   function idleMsFor(mode) {
@@ -169,8 +195,9 @@
     if (busy.uncertain) return '判断不准，按使用中处理（只轻回收）';
     if (busy.inVoice) return '正在语音，不归还工作集';
     if (busy.sharing) return '正在共享，不归还工作集';
+    if (trimmedThisIdle && !didTrim) return '本段闲置已释放过，等下次闲置';
     if (didTrim) return '已归还工作集';
-    if (win && win.visible && !win.minimized) return '窗口可见，只做轻回收';
+    if (win && win.visible && !win.minimized) return '窗口在前台，不做回收';
     if (win && win.minimized) return '已最小化，等待闲置回收';
     if (win && !win.visible) return '托盘闲置，可归还工作集';
     return lastStatus || '已挂接';
@@ -178,6 +205,7 @@
 
   function shouldTrim(mode, win, busy) {
     if (!pluginActive() || busy.uncertain || busy.inVoice || busy.sharing) return false;
+    if (trimmedThisIdle) return false;
     if (!win || win.ok === false) return false;
     var now = Date.now();
     if (lastTrimAt && now - lastTrimAt < TRIM_GAP_MS) return false;
@@ -202,6 +230,7 @@
   function maybeTrim(mode, win, busy) {
     if (!shouldTrim(mode, win, busy)) return Promise.resolve(false);
     lastTrimAt = Date.now();
+    trimmedThisIdle = true;
     return callPerf('trimWorkingSet')
       .then(function (result) {
         return !!(result && result.ok);
@@ -218,10 +247,14 @@
       .then(function (win) {
         win = win || { visible: true, minimized: false, focused: true, ok: false };
         var hidden = typeof document !== 'undefined' && document.hidden;
-        var enteredTray = hidden && !lastHidden && win.visible === false;
-        lastHidden = hidden;
-        var forceLight = enteredTray;
-        return lightReclaim(forceLight).then(function () {
+        if (win.visible && !win.minimized && !hidden) {
+          trimmedThisIdle = false;
+        }
+        var background = win.visible === false || !!win.minimized || hidden;
+        var forceLight = background && !lastBackground;
+        lastBackground = background;
+        var lightP = background ? lightReclaim(forceLight) : Promise.resolve(null);
+        return lightP.then(function () {
           return maybeTrim(settings.mode, win, busy).then(function (didTrim) {
             return callPerf('getStatus').then(function (status) {
               lastStatus = describeState(win, busy, didTrim, !!(status && status.needsRestart));
@@ -448,17 +481,17 @@
           );
         }
         var rows = [
-          modeRow('A', '稳妥（推荐）', '语音中只做轻回收，缩到托盘后启动轻量模式释放内存'),
+          modeRow('A', '稳妥（推荐）', '只在缩到托盘且不在语音/共享时释放内存，每段闲置只做一次'),
         ];
         if (this.advanced || this.mode !== 'A') {
           rows.push(
-            modeRow('B', '进阶', '1 档基础上，窗口最小化或 5 分钟未操作启动轻量模式释放内存'),
+            modeRow('B', '进阶', '1 档基础上，最小化或 5 分钟未操作也释放'),
           );
           rows.push(
             modeRow(
               'C',
               '激进',
-              '2 档基础上，闲置时间改为 2 分钟；可能导致覆盖层和屏幕共享出现不可预料的问题',
+              '2 档基础上，闲置时间改为 2 分钟，磁盘缓存更小',
             ),
           );
         }
