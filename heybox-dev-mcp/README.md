@@ -29,7 +29,7 @@
 | `heybox_eval` / `heybox_eval_file` | 渲染进程执行 JS |
 | `heybox_env` | location / 版本 / `process.env`（已打码） |
 | `heybox_vuex` | `mapState` 或 `store.state` 路径 |
-| `heybox_webpack_require` / `_search` / `_ids` | 官方模块（ID 随版本可能变；1.56 / 1.57 当前相同，不确定先 search） |
+| `heybox_webpack_require` / `_search` / `_ids` | 官方模块（ID 随版本会变，例：设置页组件 1.58.0 及以前 93509、1.59.0 起 53971；不确定先 search） |
 | `heybox_dom` | `querySelectorAll` |
 | `heybox_console` / `heybox_network` | 挂钩后的最近日志 |
 | `heybox_plugins` / `heybox_storage` / `heybox_paths` | 运行时探查 |

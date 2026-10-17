@@ -28,7 +28,7 @@ BHC 从本仓拉取 `registry.json`，用户点安装后再下载对应插件文
 `desc` 最多 100 字纯文本，不要写 HTML。  
 不要覆盖框架内置插件 id（仅 `marketplace`）。
 
-同一份插件必须同时兼容黑盒语音 **1.56.0 和 1.57.0**（与框架 `SUPPORTED_CLIENT_VERSIONS` 对齐）。`minClientVersion` 是下限，不是只支持这一版。新 API 先探测是否存在再调用；不要写死 webpack 数字 ID，也不要在说明里写仅某某版本。细则见框架仓 [docs/09-plugin-dev.md](https://github.com/BetterSomething/BetterHeyboxChat/blob/main/docs/09-plugin-dev.md)的 版本兼容 部分
+同一份插件必须同时兼容黑盒语音 **1.56.0~1.60.0**（与框架 `SUPPORTED_CLIENT_RANGE` 对齐）。`minClientVersion` 是下限，不是只支持这一版。新 API 先探测是否存在再调用；官方导出可能被删掉（1.59.0 删了 `decorate` 模块的 `lI`），这种情况要给出降级结果，不要直接 reject。不要写死 webpack 数字 ID，也不要在说明里写仅某某版本。细则见框架仓 [docs/09-plugin-dev.md](https://github.com/BetterSomething/BetterHeyboxChat/blob/main/docs/09-plugin-dev.md)的 版本兼容 部分
 
 ## 客户端拉取地址
 

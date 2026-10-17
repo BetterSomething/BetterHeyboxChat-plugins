@@ -328,7 +328,7 @@ const TOOLS = [
   },
   {
     name: 'heybox_webpack_require',
-    description: '调用 window.__bhchat_require__(id)，列出导出键和函数名。模块 ID 随客户端版本可能变化；1.56.0 / 1.57.0 当前相同（例如 30570 EventBus）。不确定时先 heybox_webpack_search。',
+    description: '调用 window.__bhchat_require__(id)，列出导出键和函数名。模块 ID 是官方内部实现，换版本会变（例：设置页组件 1.58.0 及以前 93509，1.59.0 起 53971；钉死的 EventBus 30570 至今没变）。不确定时先 heybox_webpack_search。',
     inputSchema: schema({ id: { type: 'string', description: 'webpack 模块 ID，例如 30570' } }, ['id']),
     run: async (args) => rpc('webpack_require', { id: String(args.id) }),
   },
