@@ -1,0 +1,346 @@
+/* MD3 动态配色 — 面板里的色点与取色器 */
+
+.bhchat-md3-dot {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--opacity-3, rgba(255, 255, 255, 0.35));
+  vertical-align: middle;
+  flex: none;
+}
+
+.bhchat-md3-color {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.bhchat-md3-color::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.bhchat-md3-color::-webkit-color-swatch {
+  border: 1px solid var(--opacity-3, rgba(255, 255, 255, 0.35));
+  border-radius: 5px;
+}
+
+/* 诊断列表 */
+.bhchat-md3-diag {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.bhchat-md3-diag-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--f-error-text, #f64e54);
+}
+
+.bhchat-md3-diag-mark.ok {
+  color: var(--f-success-text, #7dd95e);
+}
+
+/* 单选圈：用 50% + 负边距保证同心，不依赖框架的 left:2px 绝对定位 */
+.bhchat-md3-radio {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  border: 2px solid var(--opacity-3, rgba(255, 255, 255, 0.35));
+  border-radius: 50%;
+  transition: border-color 0.12s ease;
+}
+
+.bhchat-md3-radio.on {
+  border-color: var(--brand-text, #7dd95e);
+}
+
+.bhchat-md3-radio.on::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin: -4.5px 0 0 -4.5px;
+  border-radius: 50%;
+  background: var(--brand-text, #7dd95e);
+}
+
+/* 预设色板 */
+.bhchat-md3-swatches {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+
+.bhchat-md3-swatch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 4px 8px;
+  border-radius: 8px;
+  background: var(--opacity-1, rgba(0, 0, 0, 0.2));
+  border: 1px solid transparent;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.bhchat-md3-swatch:hover {
+  background: var(--opacity-2, rgba(255, 255, 255, 0.08));
+}
+
+.bhchat-md3-swatch.on {
+  border-color: var(--brand-text, #7dd95e);
+}
+
+.bhchat-md3-swatch-dot {
+  display: block;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--opacity-3, rgba(255, 255, 255, 0.35));
+}
+
+.bhchat-md3-swatch-name {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-2, #d2d3d7);
+  white-space: nowrap;
+}
+
+.bhchat-md3-swatch.on .bhchat-md3-swatch-name {
+  color: var(--brand-text, #7dd95e);
+  font-weight: 700;
+}
+
+/* 探查结果列表：不要内层滚动，否则会吞掉面板的滚轮事件 */
+.bhchat-md3-probe {
+  max-height: none;
+  overflow: visible;
+}
+
+.bhchat-md3-probe .bhchat-row-sub {
+  word-break: break-all;
+}
+
+
+/* ---- 图标槽位的开关样式（原 md3-icons） ---- */
+/* MD3 图标 — 面板自己的单选圈与色点（不依赖其它插件） */
+
+.bhchat-mi-radio {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  border: 2px solid var(--opacity-3, rgba(255, 255, 255, 0.35));
+  border-radius: 50%;
+  transition: border-color 0.12s ease;
+}
+
+.bhchat-mi-radio.on {
+  border-color: var(--brand-text, #7dd95e);
+}
+
+.bhchat-mi-radio.on::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin: -4.5px 0 0 -4.5px;
+  border-radius: 50%;
+  background: var(--brand-text, #7dd95e);
+}
+
+.bhchat-mi-dot {
+  display: inline-block;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--opacity-3, rgba(255, 255, 255, 0.35));
+  vertical-align: middle;
+}
+
+/* 面板内的图标预览条 */
+.bhchat-mi-preview {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 12px;
+  margin: 8px 0 4px;
+  border-radius: 8px;
+  background: var(--opacity-1, rgba(0, 0, 0, 0.2));
+  border: 1px solid var(--opacity-2, rgba(255, 255, 255, 0.08));
+}
+
+.bhchat-mi-preview-item {
+  display: block;
+  flex: none;
+}
+
+/* 壁纸预览 */
+.bhchat-md3-wall {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0 12px;
+}
+
+.bhchat-md3-wall-thumb {
+  width: 96px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--opacity-3, rgba(255, 255, 255, 0.2));
+}
+
+.bhchat-md3-wall-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 二级菜单：返回栏与入口箭头 */
+.bhchat-md3-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 10px;
+}
+
+.bhchat-md3-nav-back {
+  border: 0;
+  background: transparent;
+  color: var(--text-2, #d5d7db);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.bhchat-md3-nav-back:hover {
+  color: var(--md3-primary, #7dd95e);
+}
+
+.bhchat-md3-nav-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-1, #fff);
+}
+
+.bhchat-md3-chev {
+  color: var(--text-3, #8b8e93);
+  font-size: 18px;
+  line-height: 1;
+  padding-right: 2px;
+}
+
+/* 壁纸库网格 */
+.bhchat-md3-wallgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+  margin: 6px 0 12px;
+}
+
+.bhchat-md3-wallitem {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1.5px solid transparent;
+  background: var(--opacity-2, rgba(255, 255, 255, 0.08));
+}
+
+.bhchat-md3-wallitem.on {
+  border-color: var(--md3-primary, #7dd95e);
+}
+
+.bhchat-md3-wallitem {
+  cursor: pointer;
+}
+
+.bhchat-md3-wallitem-thumb {
+  width: 100%;
+  height: 56px;
+  object-fit: cover;
+  display: block;
+}
+
+.bhchat-md3-wallitem-ph {
+  height: 56px;
+  opacity: 0.55;
+}
+
+.bhchat-md3-wallitem-badge {
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  padding: 0 5px;
+  height: 15px;
+  line-height: 15px;
+  border-radius: 8px;
+  font-size: 10px;
+  color: #111;
+  background: var(--md3-primary, #7dd95e);
+}
+
+.bhchat-md3-wallitem-name {
+  display: block;
+  padding: 2px 6px 4px;
+  font-size: 11px;
+  color: var(--text-3, #8b8e93);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bhchat-md3-wallitem-del {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.bhchat-md3-wallitem-broken {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  padding: 0 5px;
+  height: 15px;
+  line-height: 15px;
+  border-radius: 8px;
+  font-size: 10px;
+  color: #fff;
+  background: rgba(220, 60, 60, 0.85);
+}
