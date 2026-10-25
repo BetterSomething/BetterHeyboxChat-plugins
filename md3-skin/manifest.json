@@ -3,7 +3,7 @@
   "name": "MD3 皮肤",
   "version": "1.14.1",
   "author": "LT5S",
-  "repository": "https://github.com/BetterSomething/BetterHeyboxChat-plugins/md3-skin",
+  "repository": "https://github.com/BetterSomething/BetterHeyboxChat-plugins/tree/main/md3-skin",
   "desc": "Material You 皮肤：配色、画布、控件、图标，外加壁纸库与多壁纸轮换",
   "minClientVersion": "1.56.0",
   "enabled": true,
