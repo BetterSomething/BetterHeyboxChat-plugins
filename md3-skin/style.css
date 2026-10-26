@@ -344,3 +344,136 @@
   color: #fff;
   background: rgba(220, 60, 60, 0.85);
 }
+
+
+/* 相邻的两个设置块之间留缝，否则上下两个 5px 圆角贴在一起会像圆角坏了 */
+.betterheyboxchat-setting-block .bhchat-list + .bhchat-list {
+  margin-top: 10px;
+}
+
+.betterheyboxchat-setting-block .bhchat-list {
+  border-radius: 10px;
+}
+
+/* 左栏快捷入口 */
+.bhchat-md3-rail {
+  flex: 0 0 auto;
+  width: 48px;
+  min-height: 48px;
+  box-sizing: border-box;
+  margin: 6px auto;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-2, #d5d7db);
+  background: var(--opacity-1, rgba(255, 255, 255, 0.06));
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.bhchat-md3-rail:hover {
+  color: var(--md3-primary, #7dd95e);
+  background: var(--opacity-2, rgba(255, 255, 255, 0.1));
+}
+
+.bhchat-md3-rail svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+}
+
+/* 动态壁纸图层 */
+.bhchat-md3-bgvideo {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 0;
+  pointer-events: none;
+  background: #000;
+}
+
+.bhchat-md3-bgveil {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* WE 导入选择器 */
+.bhchat-md3-wegrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.bhchat-md3-weitem {
+  cursor: pointer;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1.5px solid transparent;
+  background: var(--opacity-2, rgba(255, 255, 255, 0.06));
+  opacity: 0.62;
+  transition: opacity 0.15s ease, border-color 0.15s ease;
+}
+
+.bhchat-md3-weitem.on {
+  opacity: 1;
+  border-color: var(--md3-primary, #7dd95e);
+}
+
+.bhchat-md3-wethumb-wrap {
+  position: relative;
+}
+
+.bhchat-md3-wethumb {
+  width: 100%;
+  height: 58px;
+  object-fit: cover;
+  display: block;
+}
+
+.bhchat-md3-webadge {
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  padding: 0 4px;
+  height: 14px;
+  line-height: 14px;
+  border-radius: 7px;
+  font-size: 10px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.bhchat-md3-webadge.live {
+  background: var(--md3-primary, #7dd95e);
+  color: #111;
+}
+
+.bhchat-md3-wecheck {
+  position: absolute;
+  right: 3px;
+  top: 3px;
+  width: 16px;
+  height: 16px;
+  line-height: 16px;
+  text-align: center;
+  border-radius: 50%;
+  font-size: 11px;
+  color: #111;
+  background: var(--md3-primary, #7dd95e);
+}
+
+.bhchat-md3-wename {
+  display: block;
+  padding: 2px 6px 4px;
+  font-size: 11px;
+  color: var(--text-3, #8b8e93);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
