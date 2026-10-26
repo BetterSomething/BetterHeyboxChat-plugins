@@ -83,10 +83,10 @@
     },
     {
       "id": "md3-skin",
-      "name": "MD3 皮肤",
-      "version": "1.14.1",
+      "name": "MD3 Wallpaper",
+      "version": "1.22.2",
       "author": "LT5S",
-      "desc": "Material You 皮肤：配色、画布、控件、图标，外加壁纸库与多壁纸轮换",
+      "desc": "Material You 皮肤：配色、画布、控件、图标，支持导入 Wallpaper Engine 壁纸（视频可动态播放）",
       "minClientVersion": "1.56.0"
     }
   ]

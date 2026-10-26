@@ -45,6 +45,8 @@
     // ---- 配色
     seed: '#6750a4', // 手动主题色（MD3 基线紫）
     variant: 'tonal', // tonal | vibrant | neutral
+    seedMode: 'md3', // md3=Material You 原样（固定 tone 80）| literal=贴近原图明度
+    seedPick: 'dominant', // dominant=大面积主色 | vivid=最鲜艳的点缀色
     themeLock: 'off', // off=跟随客户端/房间 | dark=强制深色 | light=强制浅色
 
     // ---- 壁纸取色
@@ -59,6 +61,10 @@
     wallpaperMode: 'off', // off=不用 | color=仅取色 | cover=作背景
     wallpaperOpacity: 0.35, // 作背景时的遮罩强度
     wallpaperBlur: 0, // 壁纸高斯模糊（px，0 = 不模糊）
+    dynWallpaper: false, // 开启动态壁纸（视频）：仅 Wallpaper Engine 的 video 类可用
+    weRoot: 'D:\\Steam\\steamapps\\workshop\\content\\431960', // WE 壁纸根目录，用来拼视频的 file:// 路径
+    wallpaperPos: 'center', // center | top | bottom | left | right —— 铺图时的对齐方式
+    wallpaperRecolor: true, // 切换壁纸时是否用新图的主色替换主题色
     panelBlur: 0, // 面板/顶栏的毛玻璃强度（px，作用在面板自身，不动壁纸）
     panelOpacity: 85, // 侧栏/输入区不透明度（%，100=不透明）
     wallpaperQuality: 'standard', // standard | high | original —— 只影响之后选的图
@@ -72,7 +78,8 @@
     // ---- 表面与画布
     canvas: true, // 接管客户端背景（渐变/房间图）
     look: 'md3', // md3 | telegram（中性紧凑）
-    railSelect: 'ring', // ring | square | bar | tint
+    railSelect: 'ring', // ring | square | tint
+    railEntry: false, // 是否在左侧竖栏加入「打开设置」快捷入口
     killSidebarDecor: true,
     killIconBox: true,
     shellTop: true,
@@ -206,10 +213,12 @@
   }
 
   function labToLch(lab) {
+    var h = Math.atan2(lab.b, lab.a) * (180 / Math.PI);
     return {
       L: lab.L,
       C: Math.sqrt(lab.a * lab.a + lab.b * lab.b),
-      h: Math.atan2(lab.b, lab.a) * (180 / Math.PI),
+      // 归一化到 0..360：atan2 出来是 -180..180，负角度会让后面所有色相判断都失效
+      h: ((h % 360) + 360) % 360,
     };
   }
 
@@ -237,6 +246,32 @@
    * 由 seed 生成两套 MD3 色彩角色（dark / light）。
    * tone 就是 CIELAB 的 L*，这也是 MD3 tonal palette 的定义方式。
    */
+  /** 种子彩度过低时，色相没有意义，硬套会随机跑出蓝/紫 */
+  /** RGB(0-255) → {h,s,l}，只用来判断视觉上的色相区间 */
+  function rgbToHsl(rgb) {
+    var r = rgb.r / 255;
+    var g = rgb.g / 255;
+    var b = rgb.b / 255;
+    var max = Math.max(r, g, b);
+    var min = Math.min(r, g, b);
+    var l = (max + min) / 2;
+    var h = 0;
+    var s = 0;
+    if (max !== min) {
+      var d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+      else if (max === g) h = ((b - r) / d + 2) / 6;
+      else h = ((r - g) / d + 4) / 6;
+    }
+    return { h: h * 360, s: s * 100, l: l * 100 };
+  }
+
+  function seedIsNeutral(seedHex) {
+    var lch = labToLch(rgbToLab(parseHex(seedHex)));
+    return !lch || lch.C < 10;
+  }
+
   function buildRoles(seedHex, variantId, opts) {
     var opt = opts || {};
     var accentBoost = typeof opt.accentBoost === 'number' ? opt.accentBoost : 1;
@@ -245,10 +280,27 @@
     var seed = parseHex(seedHex);
     if (!seed) return null;
     var lch = labToLch(rgbToLab(seed));
-    var hue = lch.h;
     var chromaTarget = (VARIANTS[variantId] || VARIANTS.tonal).chroma;
     // seed 本身太灰（比如黑色压缩图）时给一个保底彩度，否则整界面会变水泥
-    var chroma = clamp(Math.max(chromaTarget, Math.min(lch.C, chromaTarget)) * accentBoost, 2, 90);
+    var neutralSeed = lch.C < 10;
+    var hue = lch.h;
+    if (!neutralSeed) {
+      // HSL 色相在 195~260 之间 = 视觉上的「蓝」，而 LCh 会把它算到 270~310（紫蓝区），
+      // 提亮后就成了薰衣草色。这里把色相拉回蓝色区。
+      var hsl = rgbToHsl(seed);
+      if (hsl.h >= 195 && hsl.h <= 260 && hue >= 265 && hue <= 320) {
+        hue = 262 + (hsl.h - 228) * 0.15;
+      }
+    }
+    var chroma = neutralSeed
+      ? 8 * bgChroma
+      : clamp(Math.max(chromaTarget, Math.min(lch.C, chromaTarget)) * accentBoost, 2, 90);
+
+    // 主色基调：md3 = 固定 tone 80（Material You 原样，暗色种子会被提亮成浅色）；
+    // literal = 贴近原图，沿种子自身明度（夹到可读区间），深蓝仍是蓝而不是淡紫
+    var literal = opt.seedMode === 'literal';
+    var primaryTone = literal ? clamp(lch.L, 58, 84) : 80;
+    var primaryChroma = literal ? clamp(chroma, 12, 72) : chroma;
 
     function tone(L, c) {
       return lchToHexSafe({ L: Math.round(L), C: c == null ? chroma : c, h: hue });
@@ -266,7 +318,7 @@
 
     return {
       dark: {
-        primary: tone(80),
+        primary: tone(primaryTone, primaryChroma),
         onPrimary: tone(20, chroma * 0.6),
         primaryContainer: tone(30),
         onPrimaryContainer: tone(90, chroma * 0.4),
@@ -1342,35 +1394,71 @@
     return loadImage(src).then(function (img) {
       var canvas = drawToCanvas(img, SAMPLE_SIDE);
       var data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
-      var buckets = {};
+      var px = [];
       for (var i = 0; i < data.length; i += 4) {
         if (data[i + 3] < 200) continue;
         var hex = '#' + [data[i], data[i + 1], data[i + 2]].map(function (v) {
           return ('0' + v.toString(16)).slice(-2);
         }).join('');
         var lchv = labToLch(rgbToLab(parseHex(hex)));
-        if (lchv.L < 14 || lchv.L > 92 || lchv.C < 6) continue;
-        var key = Math.round(lchv.h / 10) * 10 + '|' + Math.round(lchv.L / 12);
-        if (!buckets[key]) buckets[key] = { n: 0, r: 0, g: 0, b: 0, C: 0 };
-        var b = buckets[key];
-        b.n++;
-        b.r += data[i];
-        b.g += data[i + 1];
-        b.b += data[i + 2];
-        b.C += lchv.C;
+        px.push({ r: data[i], g: data[i + 1], b: data[i + 2], L: lchv.L, C: lchv.C, h: lchv.h });
       }
-      var best = null;
-      var bestScore = -1;
-      Object.keys(buckets).forEach(function (k) {
-        var b = buckets[k];
-        var score = Math.pow(b.n, 0.9) * (0.5 + b.C / b.n / 40);
-        if (score > bestScore) {
-          bestScore = score;
-          best = b;
+      if (!px.length) return null;
+
+      // 三级放宽：白描/灰阶图在严格条件下一个桶都凑不出来
+      var tiers = [
+        { Lmin: 14, Lmax: 92, Cmin: 6 },
+        { Lmin: 8, Lmax: 95, Cmin: 3 },
+        { Lmin: 4, Lmax: 97, Cmin: 1 },
+      ];
+      for (var t = 0; t < tiers.length; t++) {
+        var rule = tiers[t];
+        var buckets = {};
+        px.forEach(function (q) {
+          if (q.L < rule.Lmin || q.L > rule.Lmax || q.C < rule.Cmin) return;
+          var key = Math.round(q.h / 10) * 10 + '|' + Math.round(q.L / 12);
+          if (!buckets[key]) buckets[key] = { n: 0, r: 0, g: 0, b: 0, C: 0 };
+          var b = buckets[key];
+          b.n++;
+          b.r += q.r;
+          b.g += q.g;
+          b.b += q.b;
+          b.C += q.C;
+        });
+        var best = null;
+        var bestScore = -1;
+        var vivid = settings.seedPick === 'vivid';
+        Object.keys(buckets).forEach(function (k) {
+          var b = buckets[k];
+          var score = vivid
+            ? (b.C / b.n) * Math.pow(b.n, 0.35)        // 点缀色：彩度优先
+            : Math.pow(b.n, 0.9) * (0.5 + b.C / b.n / 40); // 主色调：面积优先
+          if (score > bestScore) {
+            bestScore = score;
+            best = b;
+          }
+        });
+        if (best) {
+          return '#' + [best.r / best.n, best.g / best.n, best.b / best.n]
+            .map(function (v) {
+              return ('0' + Math.round(v).toString(16)).slice(-2);
+            })
+            .join('');
         }
+      }
+
+      // 全是近乎无彩的像素：取中间调的均值，交给中性色板处理
+      var mid = px.filter(function (q) {
+        return q.L >= 20 && q.L <= 88;
       });
-      if (!best) return null;
-      return '#' + [best.r / best.n, best.g / best.n, best.b / best.n]
+      var pool = mid.length ? mid : px;
+      var sum = pool.reduce(function (acc, q) {
+        acc.r += q.r;
+        acc.g += q.g;
+        acc.b += q.b;
+        return acc;
+      }, { r: 0, g: 0, b: 0 });
+      return '#' + [sum.r / pool.length, sum.g / pool.length, sum.b / pool.length]
         .map(function (v) {
           return ('0' + Math.round(v).toString(16)).slice(-2);
         })
@@ -1421,44 +1509,72 @@
    * 壁纸铺底（作背景模式）：图 + 一层主题表面色遮罩，保证文字可读。
    * 图放在 body::before 上，这样能加 filter（亮度）；正文容器抬到 z-index 1。
    */
+  /** 壁纸模式下面板那一层（半透明侧栏 / 顶栏 / 共享区），视频与静态图共用 */
+  function wallpaperPanelCss(r, panelA) {
+    var panel = withAlpha(r.surfaceContainerLow, panelA);
+    return (
+      'html body .cpt-channel-sidebar,html body .friends-sidebar,html body .sidebar,' +
+      'html body .voice-panel-container,html body .left-sidebar-layout' +
+      '{background-color:' + panel + ' !important}' +
+      'html body .cpt-electron-title-bar{background-color:' + withAlpha(r.surface, Math.min(1, panelA + 0.1)) + ' !important}' +
+      'html body .im-rich-text-message-input,html body .im-rich-text-message-input .input-div' +
+      '{background-color:' + withAlpha(r.surfaceContainerHighest, panelA) + ' !important}' +
+      'html body .guide-wrapper,html body .add-room-wrapper,' +
+      'html body .cpt-shortcut-block-wrapper.guide-wrapper' +
+      '{background:' + withAlpha(r.surfaceContainerHigh, panelA) + ' !important;background-image:none !important}' +
+      'html body .cpt-screen-share-wrapper,html body .cpt-screen-share-wrapper .Byte-video' +
+      '{background-color:transparent !important;background-image:none !important}' +
+      'html body .top-bar{background-color:color-mix(in srgb, ' + panelSurface() + ' ' +
+      clamp(settings.headerOpacity, 0, 100) + '%, transparent) !important;background-image:none !important;' +
+      (settings.headerOpacity < 100
+        ? 'backdrop-filter:blur(' + (settings.panelBlur > 0 ? settings.panelBlur : 10) + 'px) !important;' +
+          '-webkit-backdrop-filter:blur(' + (settings.panelBlur > 0 ? settings.panelBlur : 10) + 'px) !important;'
+        : '') +
+      '}'
+    );
+  }
+
   function wallpaperCss() {
-    if (!settings.wallpaper || settings.wallpaperMode !== 'cover' || !current.roles) return '';
+    if (settings.wallpaperMode !== 'cover' || !current.roles) return '';
     var light = settings.themeLock === 'light';
     var r = light ? current.roles.light : current.roles.dark;
-    var veil = withAlpha(r.surface, clamp(settings.wallpaperOpacity, 0, 1));
     var panelA = clamp(settings.panelOpacity, 0, 100) / 100;
-    var panel = withAlpha(r.surfaceContainerLow, panelA);
+
+    // 视频壁纸：不铺图，交给 <video> 图层；面板那层照旧输出
+    if (activeWallIsVideo()) {
+      paintVeil();
+      return (
+        'html,body{background-color:transparent !important;background-image:none !important}' +
+        'html body::before{display:none !important}' +
+        'html body > #app,html body > .desktop{position:relative;z-index:1;top:auto !important}' +
+        wallpaperPanelCss(r, panelA)
+      );
+    }
+    removeVideoLayer();
+    if (!settings.wallpaper) return '';
+
+    var veil = withAlpha(r.surface, clamp(settings.wallpaperOpacity, 0, 1));
     var blur = clamp(Math.round(settings.wallpaperBlur), 0, 40);
-    // 模糊会采样到元素边界外，边缘会发虚透明 —— 外扩一圈把边界推出去
     var inset = blur > 0 ? -(blur * 2 + 8) : 0;
+    var pos = {
+      center: 'center center',
+      top: 'center top',
+      bottom: 'center bottom',
+      left: 'left center',
+      right: 'right center',
+    }[settings.wallpaperPos] || 'center center';
+
     return (
       'html,body{background-color:' + r.surface + ' !important;background-image:none !important}' +
       'html body::before{content:"";position:fixed;inset:' + inset + 'px;pointer-events:none;z-index:0;' +
       'background-image:linear-gradient(' + veil + ',' + veil + '),url("' + settings.wallpaper + '") !important;' +
-      'background-size:cover,cover !important;background-position:center,center !important;' +
+      'background-size:cover,cover !important;background-position:' + pos + ',' + pos + ' !important;' +
       'background-repeat:no-repeat,no-repeat !important;' +
       (blur > 0 ? 'filter:blur(' + blur + 'px) !important;' : '') + '}' +
-      // #app / .desktop 自带 top:30px，但因为 position 是 static 没生效；
-      // 一旦改成 relative 就会被推下 30px（底部整块被裁），所以要把 top 钉回 auto
       'html body > #app,html body > .desktop{position:relative;z-index:1;top:auto !important}' +
-      'html body .cpt-channel-sidebar,html body .friends-sidebar,html body .sidebar,' +
-      'html body .voice-panel-container,html body .left-sidebar-layout' +
-      '{background-color:' + panel + ' !important}' +
-      // 屏幕共享外框透明；底板与顶栏的透明度在 panelCss 里按滑条控制
-      'html body .cpt-screen-share-wrapper,html body .cpt-screen-share-wrapper .Byte-video' +
-      '{background-color:transparent !important;background-image:none !important}' +
-      // 「+」块与工具区底色也一起透出来。
-      // 注意选择器要和 canvasCss 里那条完全一致，否则它特异性更高、会把透明度盖掉
-      'html body .guide-wrapper,html body .add-room-wrapper,' +
-      'html body .cpt-shortcut-block-wrapper.guide-wrapper' +
-      '{background:' + withAlpha(r.surfaceContainerHigh, panelA) + ' !important;background-image:none !important}' +
-      'html body .cpt-electron-title-bar{background-color:' + withAlpha(r.surface, Math.min(1, panelA + 0.1)) + ' !important}' +
-      'html body .im-rich-text-message-input,html body .im-rich-text-message-input .input-div' +
-      '{background-color:' + withAlpha(r.surfaceContainerHighest, panelA) + ' !important}'
+      wallpaperPanelCss(r, panelA)
     );
   }
-
-  // ================================================== 壁纸库
 
   function todayStr() {
     var d = new Date();
@@ -1467,6 +1583,11 @@
 
   function newWallId() {
     return 'w' + Date.now().toString(36).slice(-8);
+  }
+
+  function activeWallIsVideo() {
+    var meta = settings.activeWallId && wallMeta(settings.activeWallId);
+    return !!(settings.dynWallpaper && meta && meta.kind === 'video' && meta.src);
   }
 
   function wallMeta(id) {
@@ -1507,20 +1628,67 @@
   }
 
   /** 选中某张壁纸：设成当前生效 + 用它取到的种子色 */
-  function activateWallpaper(id) {
+  /**
+   * 让某张壁纸生效。
+   * keepSeed=true 时只恢复图片、不动主题色 —— 启动还原用这个，
+   * 否则用户手动调好的主题色会被壁纸自带的种子色顶掉。
+   */
+  function activateWallpaper(id, keepSeed) {
     if (!id) {
       settings.activeWallId = '';
       settings.wallpaper = '';
+      removeVideoLayer();
       return Promise.resolve(false);
+    }
+    var meta0 = wallMeta(id);
+    // 视频壁纸：不读图数据，直接把视频层挂起来
+    if (settings.dynWallpaper && meta0 && meta0.kind === 'video' && meta0.src) {
+      settings.activeWallId = id;
+      settings.wallpaper = '';
+      ensureVideoLayer(meta0.src);
+      if (!keepSeed && settings.wallpaperRecolor !== false && meta0.seed) {
+        setSeed(meta0.seed, '壁纸取色');
+        persist();
+      }
+      apply();
+      return Promise.resolve(true);
     }
     return readWallData(id).then(function (data) {
       if (!data) return false;
       settings.activeWallId = id;
       settings.wallpaper = data;
       var meta = wallMeta(id);
-      if (meta && meta.seed) setSeed(meta.seed, '壁纸取色');
+      // 用户关掉「切换时重新取色」后，换图不改配色
+      var allowRecolor = keepSeed === undefined ? true : !keepSeed;
+      if (allowRecolor && settings.wallpaperRecolor !== false && meta && meta.seed) {
+        setSeed(meta.seed, '壁纸取色');
+        persist();
+      }
       apply();
       return true;
+    });
+  }
+
+  /**
+   * 启动时把当前壁纸读回内存。
+   * 之前只在轮换流程里调 activateWallpaper，导致「固定」模式重启后图片丢失。
+   */
+  function restoreActiveWall() {
+    var list = settings.wallpapers || [];
+    if (!list.length) return Promise.resolve(false);
+    var id = settings.activeWallId && wallMeta(settings.activeWallId) ? settings.activeWallId : list[0].id;
+    return activateWallpaper(id, true).then(function (ok) {
+      if (ok) return true;
+      // 当前这张数据丢了：往后找第一张还能读出来的
+      var rest = list.filter(function (w) {
+        return w.id !== id;
+      });
+      return rest.reduce(function (chain, w) {
+        return chain.then(function (done) {
+          if (done) return true;
+          return activateWallpaper(w.id, true);
+        });
+      }, Promise.resolve(false));
     });
   }
 
@@ -1546,6 +1714,19 @@
   }
 
   /** 老库没有缩略图的，补一次（只做一遍，结果写回元信息） */
+  /** 0.2s 抓不到就再试 1.5s（有些视频开头是纯黑，压缩后也接近空） */
+  function videoSeedFallbackThumb(w) {
+    return videoFrameFromUrl(w.src, 1.5).then(function (frame2) {
+      if (!frame2) return;
+      return compressWallpaper(frame2, 'standard').catch(function () {
+        return '';
+      }).then(function (thumb2) {
+        if (!thumb2) return;
+        w.thumb = thumb2;
+      });
+    });
+  }
+
   function backfillThumbs() {
     var list = settings.wallpapers || [];
     var todo = list.filter(function (w) {
@@ -1555,6 +1736,23 @@
     var changed = false;
     return todo.reduce(function (chain, w) {
       return chain.then(function () {
+        // 视频条目没有图数据：从视频里抓一帧当缩略图
+        if (w.kind === 'video' && w.src) {
+          return videoFrameFromUrl(w.src, 0.2).then(function (frame) {
+            if (!frame) {
+              return videoSeedFallbackThumb(w).then(function () {
+                if (w.thumb) changed = true;
+              });
+            }
+            return compressWallpaper(frame, 'standard').catch(function () {
+              return '';
+            }).then(function (thumb) {
+              if (!thumb) return;
+              w.thumb = thumb;
+              changed = true;
+            });
+          });
+        }
         return readWallData(w.id).then(function (data) {
           if (!data) return;
           return makeThumb(data).then(function (thumb) {
@@ -1629,6 +1827,557 @@
     return rotateWallpaper();
   }
 
+  // ================================================== 左栏快捷入口
+
+  var railEl = null;
+  var railObserver = null;
+
+  function railSvg() {
+    return (
+      '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+      '<path d="M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-.95-.5-1.3-.3-.34-.5-.78-.5-1.2 0-1.1.9-2 2-2h1.2c2.1 0 3.8-1.7 3.8-3.8C20 6.3 16.4 3 12 3Zm-5.5 9a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm3-4a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm3 4a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Z"/>' +
+      '</svg>'
+    );
+  }
+
+  function openPluginPanel() {
+    try {
+      if (window.BHChat && typeof window.BHChat.openPanel === 'function') {
+        window.BHChat.openPanel(PLUGIN_ID);
+        return;
+      }
+      if (window.BHChat && typeof window.BHChat.openSettings === 'function') {
+        window.BHChat.openSettings('betterheyboxchat');
+      }
+    } catch (err) {
+      console.warn('[BetterHeyboxChat] md3-skin 打开面板失败:', err);
+    }
+  }
+
+  function findRailHost() {
+    var rail = document.querySelector('.left-sidebar-layout');
+    if (!rail) return null;
+    // 放在齿轮之前
+    var gear = rail.querySelector('.icon-set');
+    return { rail: rail, before: gear };
+  }
+
+  function mountRailEntry() {
+    if (!settings.enabled || !settings.railEntry) return;
+    var host = findRailHost();
+    if (!host) return;
+    if (railEl && railEl.parentNode === host.rail) return;
+    if (!railEl) {
+      railEl = document.createElement('div');
+      railEl.className = 'bhchat-md3-rail';
+      railEl.title = 'MD3 皮肤设置';
+      railEl.innerHTML = railSvg();
+      railEl.addEventListener('click', openPluginPanel);
+    }
+    if (host.before && host.before.parentNode === host.rail) {
+      host.rail.insertBefore(railEl, host.before);
+    } else {
+      host.rail.appendChild(railEl);
+    }
+    watchRailHost();
+  }
+
+  function unmountRailEntry() {
+    if (railEl && railEl.parentNode) railEl.parentNode.removeChild(railEl);
+    if (railObserver) {
+      railObserver.disconnect();
+      railObserver = null;
+    }
+  }
+
+  /** 客户端重渲染会把我们插的节点冲掉，发现丢了就补回去 */
+  function watchRailHost() {
+    if (railObserver || typeof MutationObserver === 'undefined') return;
+    var host = findRailHost();
+    if (!host) return;
+    railObserver = new MutationObserver(function () {
+      if (!settings.enabled || !settings.railEntry) return;
+      var h = findRailHost();
+      if (!h) return;
+      if (!railEl || railEl.parentNode !== h.rail) {
+        clearTimeout(watchRailHost._t);
+        watchRailHost._t = setTimeout(mountRailEntry, 120);
+      }
+    });
+    railObserver.observe(host.rail, { childList: true });
+  }
+
+  function syncRailEntry() {
+    if (settings.enabled && settings.railEntry) mountRailEntry();
+    else unmountRailEntry();
+  }
+
+  // ================================================== Wallpaper Engine 导入
+
+  function readFileAsText(file) {
+    return new Promise(function (resolve) {
+      var reader = new FileReader();
+      reader._file = file;
+      reader.onload = function () {
+        resolve(String(reader.result || ''));
+      };
+      reader.onerror = function () {
+        resolve('');
+      };
+      reader.readAsText(file);
+    });
+  }
+
+  function readFileAsDataUrl(file) {
+    return new Promise(function (resolve) {
+      var reader = new FileReader();
+      reader._file = file;
+      reader.onload = function () {
+        resolve(String(reader.result || ''));
+      };
+      reader.onerror = function () {
+        resolve('');
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  /**
+   * 视频取色：单帧不可靠（很多视频开头是黑场/淡入）。
+   * 抓 10% / 40% / 75% 三帧各取一次色，优先挑「亮度适中且彩度最高」的。
+   */
+  function videoSeedFromUrl(url) {
+    if (!url) return Promise.resolve('');
+    return new Promise(function (resolve) {
+      var video = document.createElement('video');
+      var done = false;
+      var points = [];
+      var idx = 0;
+      var results = [];
+      var finish = function () {
+        if (done) return;
+        done = true;
+        var best = '';
+        var bestScore = -1;
+        results.forEach(function (seed) {
+          if (!seed) return;
+          var lch = labToLch(rgbToLab(parseHex(seed)));
+          if (!lch || lch.L < 12 || lch.L > 92) return;
+          // 亮度适中优先，其次彩度
+          var lScore = 1 - Math.abs(lch.L - 55) / 60;
+          var score = lch.C * Math.max(0.2, lScore);
+          if (score > bestScore) {
+            bestScore = score;
+            best = seed;
+          }
+        });
+        resolve(best);
+      };
+      var shoot = function () {
+        try {
+          var canvas = document.createElement('canvas');
+          canvas.width = video.videoWidth || 1280;
+          canvas.height = video.videoHeight || 720;
+          canvas.getContext('2d').drawImage(video, 0, 0);
+          var frameUrl = canvas.toDataURL('image/jpeg', 0.85);
+          Promise.resolve(extractSeedFromImage(frameUrl))
+            .catch(function () {
+              return '';
+            })
+            .then(function (seed) {
+              results.push(seed);
+              idx++;
+              if (idx >= points.length) finish();
+              else {
+                try {
+                  video.currentTime = points[idx];
+                } catch (err) {
+                  finish();
+                }
+              }
+            });
+        } catch (err) {
+          finish();
+        }
+      };
+      video.muted = true;
+      video.preload = 'auto';
+      video.src = url;
+      video.onerror = finish;
+      video.onloadeddata = function () {
+        var dur = video.duration || 0;
+        points = dur > 0.5 ? [dur * 0.1, dur * 0.4, dur * 0.75] : [0];
+        try {
+          video.currentTime = points[0];
+        } catch (err) {
+          finish();
+        }
+      };
+      video.onseeked = shoot;
+      setTimeout(function () {
+        finish();
+      }, 12000);
+    });
+  }
+
+  /** 从视频 URL 抓一帧（file:// 也能用，画布未污染） */
+  function videoFrameFromUrl(url, at) {
+    return new Promise(function (resolve) {
+      if (!url || typeof document === 'undefined') {
+        resolve('');
+        return;
+      }
+      var video = document.createElement('video');
+      var done = false;
+      var finish = function (out) {
+        if (done) return;
+        done = true;
+        resolve(out || '');
+      };
+      video.muted = true;
+      video.preload = 'auto';
+      video.src = url;
+      video.onerror = function () {
+        finish('');
+      };
+      video.onloadeddata = function () {
+        try {
+          video.currentTime = Math.min(at || 0.2, Math.max(0.05, (video.duration || 1) / 3));
+        } catch (err) {
+          finish('');
+        }
+      };
+      video.onseeked = function () {
+        try {
+          var canvas = document.createElement('canvas');
+          canvas.width = video.videoWidth || 1280;
+          canvas.height = video.videoHeight || 720;
+          canvas.getContext('2d').drawImage(video, 0, 0);
+          finish(canvas.toDataURL('image/jpeg', 0.9));
+        } catch (err) {
+          finish('');
+        }
+      };
+      setTimeout(function () {
+        finish('');
+      }, 8000);
+    });
+  }
+
+  /** 视频壁纸没有 preview 时，抓一帧当静态图 */
+  function videoFrameDataUrl(file, at) {
+    return new Promise(function (resolve) {
+      if (typeof URL === 'undefined' || !URL.createObjectURL) {
+        resolve('');
+        return;
+      }
+      var url = URL.createObjectURL(file);
+      var video = document.createElement('video');
+      var done = false;
+      var finish = function (out) {
+        if (done) return;
+        done = true;
+        try {
+          URL.revokeObjectURL(url);
+        } catch (err) {
+          /* 忽略 */
+        }
+        resolve(out || '');
+      };
+      video.muted = true;
+      video.preload = 'auto';
+      video.src = url;
+      video.onerror = function () {
+        finish('');
+      };
+      video.onloadeddata = function () {
+        try {
+          video.currentTime = Math.min(at || 0.3, (video.duration || 1) / 2);
+        } catch (err) {
+          finish('');
+        }
+      };
+      video.onseeked = function () {
+        try {
+          var canvas = document.createElement('canvas');
+          canvas.width = video.videoWidth || 1280;
+          canvas.height = video.videoHeight || 720;
+          canvas.getContext('2d').drawImage(video, 0, 0);
+          finish(canvas.toDataURL('image/jpeg', 0.9));
+        } catch (err) {
+          finish('');
+        }
+      };
+      setTimeout(function () {
+        finish('');
+      }, 8000);
+    });
+  }
+
+  function apiCall(name) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    try {
+      var e = window.electronAPI;
+      if (!e || typeof e[name] !== 'function') return Promise.resolve(null);
+      return Promise.resolve(e[name].apply(e, args)).catch(function () {
+        return null;
+      });
+    } catch (err) {
+      return Promise.resolve(null);
+    }
+  }
+
+  function bytesToDataUrl(bytes, mime) {
+    if (!bytes) return '';
+    var arr = bytes.data ? bytes.data : Object.keys(bytes).map(function (k) {
+      return bytes[k];
+    });
+    if (!arr || !arr.length) return '';
+    var u8 = new Uint8Array(arr);
+    var bin = '';
+    var chunk = 0x8000;
+    for (var i = 0; i < u8.length; i += chunk) {
+      bin += String.fromCharCode.apply(null, u8.subarray(i, i + chunk));
+    }
+    try {
+      return 'data:' + (mime || 'image/jpeg') + ';base64,' + btoa(bin);
+    } catch (err) {
+      return '';
+    }
+  }
+
+  /**
+   * 扫描 Wallpaper Engine 壁纸库（按路径，不需要用户选目录）。
+   * 返回 [{id,name,type,dir,previewPath,videoPath}]，web 类直接跳过（跑不起来）。
+   */
+  /** 极简 VDF（Valve KeyValues）解析：够读 appworkshop_*.acf 就行 */
+  function parseVdf(text) {
+    var i = 0;
+    var n = text.length;
+    function skipWs() {
+      while (i < n && /\s/.test(text.charAt(i))) i++;
+    }
+    function readStr() {
+      i++; // 跳过开头的引号
+      var s = '';
+      while (i < n && text.charAt(i) !== '"') s += text.charAt(i++);
+      i++; // 跳过结尾引号
+      return s;
+    }
+    function parseObj() {
+      var obj = {};
+      while (i < n) {
+        skipWs();
+        var ch = text.charAt(i);
+        if (ch === '}') {
+          i++;
+          return obj;
+        }
+        if (ch !== '"') {
+          i++;
+          continue;
+        }
+        var key = readStr();
+        skipWs();
+        if (text.charAt(i) === '{') {
+          i++;
+          obj[key] = parseObj();
+        } else if (text.charAt(i) === '"') {
+          obj[key] = readStr();
+        }
+      }
+      return obj;
+    }
+    var root = parseObj();
+    return root;
+  }
+
+  /** 读订阅清单：返回已安装的工坊 id 集合（读不到返回 null，表示不过滤） */
+  function readInstalledIds(root) {
+    if (!root) return Promise.resolve(null);
+    var acf = String(root).replace(/[\\/]+$/, '').replace(/[\\/]content[\\/][^\\/]+$/i, '') +
+      '\\appworkshop_431960.acf';
+    return apiCall('readFile', acf).then(function (bytes) {
+      if (!bytes) return null;
+      var arr = bytes.data ? bytes.data : Object.keys(bytes).map(function (k) {
+        return bytes[k];
+      });
+      var text = '';
+      try {
+        text = new TextDecoder('utf-8').decode(new Uint8Array(arr));
+      } catch (err) {
+        text = '';
+      }
+      if (!text) return null;
+      var vdf = {};
+      try {
+        vdf = parseVdf(text) || {};
+      } catch (err) {
+        vdf = {};
+      }
+      var app = vdf.AppWorkshop || vdf['AppWorkshop'] || {};
+      var inst = app.WorkshopItemsInstalled || {};
+      var ids = Object.keys(inst).filter(function (k) {
+        return /^\d+$/.test(k);
+      });
+      return ids.length ? ids : null;
+    });
+  }
+
+  function scanEngineByPath(root) {
+    if (!root) return Promise.resolve([]);
+    var installed = null;
+    return readInstalledIds(root).then(function (ids) {
+      installed = ids;
+      return apiCall('getFolderFiles', root);
+    }).then(function (list) {
+      if (!Array.isArray(list) || !list.length) return [];
+      var groups = {};
+      list.forEach(function (it) {
+        var name = it && it.entry && it.entry.name;
+        var parent = it && it.entry && it.entry.parentPath;
+        if (!name || !parent) return;
+        if (!groups[parent]) groups[parent] = [];
+        groups[parent].push(name);
+      });
+      var dirs = Object.keys(groups).filter(function (dir) {
+        return groups[dir].indexOf('project.json') >= 0;
+      });
+      var out = [];
+      return dirs.reduce(function (chain, dir) {
+        return chain.then(function () {
+          var id = dir.split(/[\\/]/).pop();
+          return apiCall('readFile', dir + '\\project.json').then(function (bytes) {
+            var text = '';
+            if (bytes) {
+              var arr = bytes.data ? bytes.data : Object.keys(bytes).map(function (k) {
+                return bytes[k];
+              });
+              try {
+                text = new TextDecoder('utf-8').decode(new Uint8Array(arr));
+              } catch (err) {
+                text = '';
+              }
+            }
+            var meta = {};
+            try {
+              meta = JSON.parse(String(text).replace(/^\uFEFF/, '')) || {};
+            } catch (err) {
+              meta = {};
+            }
+            var type = String(meta.type || 'unknown');
+            // 网页（web）与场景（scene）都跑不起来，直接跳过
+            if (type === 'web' || type === 'scene') return;
+            var files = groups[dir];
+            var preview = files.filter(function (n) {
+              return /^preview\.(jpg|jpeg|png|gif|webp)$/i.test(n);
+            })[0];
+            var video = files.filter(function (n) {
+              return /\.(mp4|webm|mov|mkv)$/i.test(n);
+            })[0];
+            if (!video) return; // 只收视频类
+            if (!preview && !video) return;
+            out.push({
+              id: id,
+              name: String(meta.title || id).slice(0, 40),
+              type: type,
+              dir: dir,
+              previewPath: preview ? dir + '\\' + preview : '',
+              videoPath: video ? dir + '\\' + video : '',
+            });
+          });
+        });
+      }, Promise.resolve()).then(function () {
+        var filtered = installed
+          ? out.filter(function (it) {
+              return installed.indexOf(it.id) >= 0;
+            })
+          : out;
+        filtered.sort(function (a, b) {
+          return a.name.localeCompare(b.name, 'zh');
+        });
+        filtered.dropped = installed ? out.length - filtered.length : 0;
+        filtered.filtered = !!installed;
+        return filtered;
+      });
+    });
+  }
+
+  // ================================================== 动态壁纸（视频图层）
+
+  var videoEl = null;
+  var veilEl = null;
+
+  /** 绝对路径 → file:// URL（也接受已经是 file:// 的输入） */
+  function absToFileUrl(pathIn) {
+    var p = String(pathIn || '').trim();
+    if (!p) return '';
+    if (/^file:\/\//i.test(p)) return p;
+    var norm = p.replace(/\\/g, '/');
+    if (!/^\//.test(norm)) norm = '/' + norm;
+    return 'file://' + encodeURI(norm).replace(/#/g, '%23');
+  }
+
+  function ensureVideoLayer(url) {
+    if (!url) return;
+    if (!videoEl) {
+      videoEl = document.createElement('video');
+      videoEl.id = 'bhchat-md3-bgvideo';
+      videoEl.className = 'bhchat-md3-bgvideo';
+      videoEl.muted = true;
+      videoEl.loop = true;
+      videoEl.autoplay = true;
+      videoEl.setAttribute('playsinline', '');
+      var anchor = document.body.firstChild || null;
+      if (document.body.insertBefore) document.body.insertBefore(videoEl, anchor);
+      else document.body.appendChild(videoEl);
+    }
+    var curSrc = videoEl.getAttribute ? videoEl.getAttribute('src') : videoEl.src;
+    if (curSrc !== url) {
+      if (videoEl.setAttribute) videoEl.setAttribute('src', url);
+      else videoEl.src = url;
+      if (videoEl.load) videoEl.load();
+    }
+    try {
+      var p = videoEl.play && videoEl.play();
+      if (p && p.catch) p.catch(function () {});
+    } catch (err) {
+      /* 桩环境没有 play */
+    }
+    if (!veilEl) {
+      veilEl = document.createElement('div');
+      veilEl.id = 'bhchat-md3-bgveil';
+      veilEl.className = 'bhchat-md3-bgveil';
+      if (document.body.insertBefore) {
+        document.body.insertBefore(veilEl, videoEl ? videoEl.nextSibling : document.body.firstChild);
+      } else {
+        document.body.appendChild(veilEl);
+      }
+    }
+  }
+
+  function removeVideoLayer() {
+    if (videoEl) {
+      try {
+        videoEl.pause();
+      } catch (err) {
+        /* 忽略 */
+      }
+      if (videoEl.parentNode) videoEl.parentNode.removeChild(videoEl);
+      videoEl = null;
+    }
+    if (veilEl && veilEl.parentNode) veilEl.parentNode.removeChild(veilEl);
+    veilEl = null;
+  }
+
+  /** 视频模式下遮罩交给独立图层，body::before 不再画图 */
+  function paintVeil() {
+    if (!veilEl || !current.roles) return;
+    var light = settings.themeLock === 'light';
+    var r = light ? current.roles.light : current.roles.dark;
+    veilEl.style.background = withAlpha(r.surface, clamp(settings.wallpaperOpacity, 0, 1));
+  }
+
   // ================================================== 存储
 
   function normConf(src) {
@@ -1640,8 +2389,11 @@
     });
     if (parseHex(src.seed)) out.seed = String(src.seed).toLowerCase();
     if (VARIANTS[src.variant]) out.variant = src.variant;
+    if (src.seedMode === 'md3' || src.seedMode === 'literal') out.seedMode = src.seedMode;
+    if (src.seedPick === 'dominant' || src.seedPick === 'vivid') out.seedPick = src.seedPick;
     if (src.look === 'md3' || src.look === 'telegram') out.look = src.look;
     if (['ring', 'square', 'tint'].indexOf(src.railSelect) >= 0) out.railSelect = src.railSelect;
+    if (typeof src.railEntry === 'boolean') out.railEntry = src.railEntry;
     if (['off', 'dark', 'light'].indexOf(src.themeLock) >= 0) out.themeLock = src.themeLock;
     if (typeof src.iconReplace === 'boolean') out.iconReplace = src.iconReplace;
     if (src.style === 'filled' || src.style === 'outlined') out.style = src.style;
@@ -1665,6 +2417,8 @@
             size: Math.max(0, Math.round(Number(w.size) || 0)),
             at: Number(w.at) || 0,
             thumb: typeof w.thumb === 'string' && /^data:image\//.test(w.thumb) && w.thumb.length < 40000 ? w.thumb : '',
+            kind: w.kind === 'video' ? 'video' : 'image',
+            src: typeof w.src === 'string' ? w.src.slice(0, 400) : '',
           };
         });
     }
@@ -1681,6 +2435,12 @@
     out.wallpaperOpacity = clamp(out.wallpaperOpacity, 0, 1);
     if (typeof src.wallpaperBlur === 'number' && isFinite(src.wallpaperBlur)) out.wallpaperBlur = src.wallpaperBlur;
     out.wallpaperBlur = clamp(Math.round(out.wallpaperBlur), 0, 40);
+    if (typeof src.dynWallpaper === 'boolean') out.dynWallpaper = src.dynWallpaper;
+    if (typeof src.weRoot === 'string' && src.weRoot.length < 260) out.weRoot = src.weRoot;
+    if (['center', 'top', 'bottom', 'left', 'right'].indexOf(src.wallpaperPos) >= 0) {
+      out.wallpaperPos = src.wallpaperPos;
+    }
+    if (typeof src.wallpaperRecolor === 'boolean') out.wallpaperRecolor = src.wallpaperRecolor;
     if (typeof src.panelBlur === 'number' && isFinite(src.panelBlur)) out.panelBlur = src.panelBlur;
     out.panelBlur = clamp(Math.round(out.panelBlur), 0, 30);
     out.accentBoost = clamp(out.accentBoost, 0.5, 2);
@@ -1740,10 +2500,14 @@
             return settings;
           });
         }
-        // 有库但还没决定用哪张：按轮换规则挑一张
-        return maybeRotate(false).then(function () {
-          return settings;
-        });
+        // 先按轮换规则挑（轮换模式会换图并重新取色），再把当前这张读回内存
+        return maybeRotate(false)
+          .then(function () {
+            return restoreActiveWall();
+          })
+          .then(function () {
+            return settings;
+          });
       })
       .catch(function () {
         return settings;
@@ -1848,17 +2612,24 @@
     } catch (err) {
       console.warn('[BetterHeyboxChat] md3-skin 应用失败:', err);
     }
+    try {
+      syncRailEntry();
+    } catch (err) {
+      console.warn('[BetterHeyBoxChat] md3-skin 左栏入口同步失败:', err);
+    }
     if (panelRefresh) panelRefresh();
     return Promise.resolve(settings);
   }
 
   function setSeed(seedHex, source) {
     var roles = buildRoles(seedHex, settings.variant, {
+      seedMode: settings.seedMode,
       accentBoost: settings.accentBoost,
       bgChroma: settings.bgChroma,
       bgBright: settings.bgBright,
     });
     if (!roles) return false;
+    settings.seed = roles.meta.seed;
     current = { seed: roles.meta.seed, source: source || '手动主题色', roles: roles };
     apply();
     return true;
@@ -1911,6 +2682,8 @@
           enabled: settings.enabled,
           seed: settings.seed,
           variant: settings.variant,
+          seedMode: settings.seedMode,
+          seedPick: settings.seedPick,
           themeLock: settings.themeLock,
           canvas: settings.canvas,
           look: settings.look,
@@ -1927,6 +2700,10 @@
           wallpapers: (settings.wallpapers || []).slice(),
           thumbs: {},
           broken: {},
+          weAll: [],
+          wePage: 0,
+          wePageSize: 12,
+          weBusy: false,
           activeWallId: settings.activeWallId,
           wallMode: settings.wallMode,
           rotateOrder: settings.rotateOrder,
@@ -1936,7 +2713,12 @@
           panelOpacity: settings.panelOpacity,
           wallpaperQuality: settings.wallpaperQuality,
           roomCard: settings.roomCard,
+          railEntry: settings.railEntry,
           wallpaperBlur: settings.wallpaperBlur,
+          wallpaperPos: settings.wallpaperPos,
+          dynWallpaper: settings.dynWallpaper,
+          weRoot: settings.weRoot,
+          wallpaperRecolor: settings.wallpaperRecolor,
           panelBlur: settings.panelBlur,
           iconReplace: settings.iconReplace,
           headerOpacity: settings.headerOpacity,
@@ -1969,12 +2751,23 @@
       },
       beforeDestroy: function () {
         panelRefresh = null;
+        // 只在「设置窗口已经关掉」时才清，避免在面板之间切换时把别人顶掉
+        setTimeout(function () {
+          try {
+            if (document.querySelector('.cpt-layout-config-content')) return;
+            if (window.BHChat && window.BHChat.emit) window.BHChat.emit('open-panel', '');
+          } catch (err) {
+            /* 忽略 */
+          }
+        }, 250);
       },
       methods: {
         sync: function () {
           this.enabled = settings.enabled;
           this.seed = settings.seed;
           this.variant = settings.variant;
+          this.seedMode = settings.seedMode;
+          this.seedPick = settings.seedPick;
           this.themeLock = settings.themeLock;
           this.canvas = settings.canvas;
           this.look = settings.look;
@@ -1998,7 +2791,12 @@
           this.panelOpacity = settings.panelOpacity;
           this.wallpaperQuality = settings.wallpaperQuality;
           this.roomCard = settings.roomCard;
+          this.railEntry = settings.railEntry;
           this.wallpaperBlur = settings.wallpaperBlur;
+          this.wallpaperPos = settings.wallpaperPos;
+          this.dynWallpaper = settings.dynWallpaper;
+          this.weRoot = settings.weRoot;
+          this.wallpaperRecolor = settings.wallpaperRecolor;
           this.panelBlur = settings.panelBlur;
           this.iconReplace = settings.iconReplace;
           this.headerOpacity = settings.headerOpacity;
@@ -2071,6 +2869,11 @@
           var self = this;
           (settings.wallpapers || []).forEach(function (w) {
             if (self.broken[w.id] !== undefined) return;
+            // 视频条目没有图数据，别误标「数据缺失」
+            if (w.kind === 'video' && w.src) {
+              self.$set ? self.$set(self.broken, w.id, false) : (self.broken[w.id] = false);
+              return;
+            }
             readWallData(w.id).then(function (data) {
               self.$set ? self.$set(self.broken, w.id, !data) : (self.broken[w.id] = !data);
             });
@@ -2107,6 +2910,244 @@
             self.sync();
             self.flash(ok ? '已换一张' : '至少要有两张壁纸才能轮换');
           });
+        },
+        onScanEngine: function () {
+          var self = this;
+          if (!settings.weRoot) {
+            this.flash('先填 WE 壁纸根目录');
+            return;
+          }
+          if (!window.electronAPI || typeof window.electronAPI.getFolderFiles !== 'function') {
+            this.flash('当前环境不支持扫描目录');
+            return;
+          }
+          this.weBusy = true;
+          this.weAll = [];
+          this.wePage = 0;
+          this.flash('正在扫描…');
+          scanEngineByPath(settings.weRoot)
+            .then(function (list) {
+              self.weBusy = false;
+              self.weAll = list.map(function (it) {
+                return {
+                  id: it.id,
+                  name: it.name,
+                  type: it.type,
+                  previewPath: it.previewPath,
+                  videoPath: it.videoPath,
+                  thumb: '',
+                  on: false,
+                };
+              });
+              if (!self.weAll.length) {
+                self.flash('没扫到可用壁纸（网页类已跳过）');
+                return;
+              }
+              var note = '扫到 ' + self.weAll.length + ' 个视频壁纸';
+              if (list.dropped) note += '（跳过 ' + list.dropped + ' 个已退订残留）';
+              if (!list.filtered) note += '（没读到订阅清单，可能含已退订残留）';
+              self.flash(note);
+              self.loadPageThumbs();
+            })
+            .catch(function () {
+              self.weBusy = false;
+              self.flash('扫描失败');
+            });
+        },
+        loadPageThumbs: function () {
+          var self = this;
+          var start = this.wePage * this.wePageSize;
+          var page = (this.weAll || []).slice(start, start + this.wePageSize);
+          page.forEach(function (it, idx) {
+            if (it.thumb || !it.previewPath) return;
+            apiCall('readFile', it.previewPath).then(function (bytes) {
+              if (!bytes) return;
+              var mime = /\.png$/i.test(it.previewPath)
+                ? 'image/png'
+                : /\.gif$/i.test(it.previewPath)
+                  ? 'image/gif'
+                  : /\.webp$/i.test(it.previewPath)
+                    ? 'image/webp'
+                    : 'image/jpeg';
+              var url = bytesToDataUrl(bytes, mime);
+              if (!url) return;
+              self.$set ? self.$set(page[idx], 'thumb', url) : (page[idx].thumb = url);
+            });
+          });
+        },
+        onRecolorCurrent: function () {
+          var self = this;
+          var id = settings.activeWallId;
+          var meta = id && wallMeta(id);
+          if (!meta) {
+            this.flash('先选一张壁纸');
+            return;
+          }
+          var done = function (seed) {
+            if (!seed) {
+              self.flash('这张壁纸没取到可用的颜色');
+              return;
+            }
+            meta.seed = seed;
+            setSeed(seed, '壁纸取色');
+            persist();
+            self.sync();
+            self.flash('已重新取色：' + seed);
+          };
+          this.flash('正在取色…');
+          if (meta.kind === 'video' && meta.src) {
+            videoSeedFromUrl(meta.src).then(function (seed) {
+              if (seed) return done(seed);
+              return readWallData(id).then(function (data) {
+                return data ? extractSeedFromImage(data).then(done) : done('');
+              });
+            });
+            return;
+          }
+          readWallData(id).then(function (data) {
+            if (!data) return done('');
+            extractSeedFromImage(data).then(done);
+          });
+        },
+        onWePage: function (delta) {
+          var total = Math.max(1, Math.ceil((this.weAll || []).length / this.wePageSize));
+          var next = Math.min(total - 1, Math.max(0, this.wePage + delta));
+          if (next === this.wePage) return;
+          this.wePage = next;
+          this.loadPageThumbs();
+        },
+        toggleWeItem: function (item) {
+          item.on = !item.on;
+        },
+        onWeSelectPage: function (on) {
+          var start = this.wePage * this.wePageSize;
+          (this.weAll || []).slice(start, start + this.wePageSize).forEach(function (it) {
+            it.on = !!on;
+          });
+        },
+        onWeClear: function () {
+          (this.weAll || []).forEach(function (it) {
+            it.on = false;
+          });
+          this.flash('已清空选择');
+        },
+        onCancelImport: function () {
+          this.weAll = [];
+          this.wePage = 0;
+          this.flash('已取消');
+        },
+        onImportSelected: function () {
+          var self = this;
+          var chosen = (this.weAll || []).filter(function (it) {
+            return it.on;
+          });
+          if (!chosen.length) {
+            this.flash('先勾选要导入的壁纸');
+            return;
+          }
+          var room = 12 - (settings.wallpapers || []).length;
+          if (room <= 0) {
+            this.flash('壁纸库已满（最多 12 张）');
+            return;
+          }
+          var list = chosen.slice(0, room);
+          var added = 0;
+          var skipped = 0;
+          var firstId = '';
+          this.flash('正在导入 ' + list.length + ' 张…');
+
+          var chain = list.reduce(function (prev, item) {
+            return prev.then(function () {
+              // 视频类 + 开启动态：只记路径，图用预览
+              if (settings.dynWallpaper && item.videoPath && settings.weRoot) {
+                // 缩略图与取色都优先用视频首帧；取不到再退回 preview.jpg
+                return videoFrameFromUrl(absToFileUrl(item.videoPath), 0.2).then(function (frame) {
+                  if (frame) return frame;
+                  return apiCall('readFile', item.previewPath).then(function (bytes) {
+                    return bytesToDataUrl(bytes, 'image/jpeg');
+                  });
+                }).then(function (thumbRaw) {
+                  var mk = function (thumb) {
+                    var meta = {
+                      id: newWallId(),
+                      name: String(item.name || '动态壁纸').slice(0, 40),
+                      seed: '',
+                      size: 0,
+                      at: Date.now(),
+                      thumb: thumb || '',
+                      kind: 'video',
+                      src: absToFileUrl(item.videoPath),
+                    };
+                    settings.wallpapers = (settings.wallpapers || []).concat([meta]);
+                    if (!firstId) firstId = meta.id;
+                    added++;
+                    // 取色用多帧采样，失败再退回缩略图
+                    return videoSeedFromUrl(meta.src).then(function (seed) {
+                      if (seed) return seed;
+                      return extractSeedFromImage(thumb || '').catch(function () {
+                        return '';
+                      });
+                    }).then(function (seed) {
+                      meta.seed = seed || '';
+                    });
+                  };
+                  if (!thumbRaw) return mk('');
+                  return compressWallpaper(thumbRaw, 'standard').catch(function () {
+                    return '';
+                  }).then(mk);
+                });
+              }
+              // 静态：预览图（gif 取首帧交给压缩环节）
+              var readP = item.previewPath
+                ? apiCall('readFile', item.previewPath).then(function (bytes) {
+                    return bytesToDataUrl(bytes, /\.png$/i.test(item.previewPath) ? 'image/png' : 'image/jpeg');
+                  })
+                : Promise.resolve('');
+              return readP.then(function (dataUrl) {
+                if (!dataUrl) {
+                  skipped++;
+                  return;
+                }
+                return compressWallpaper(dataUrl, settings.wallpaperQuality)
+                  .then(function (small) {
+                    return extractSeedFromImage(small).catch(function () {
+                      return '';
+                    }).then(function (seed) {
+                      return { small: small, seed: seed };
+                    });
+                  })
+                  .then(function (r) {
+                    return addWallpaper(r.small, r.seed || '').then(function () {
+                      var cur = (settings.wallpapers || [])[settings.wallpapers.length - 1];
+                      if (cur && item.name) cur.name = String(item.name).slice(0, 40);
+                      if (!firstId && cur) firstId = cur.id;
+                      added++;
+                    });
+                  })
+                  .catch(function () {
+                    skipped++;
+                  });
+              });
+            });
+          }, Promise.resolve());
+
+          chain
+            .then(function () {
+              if (firstId && firstId !== settings.activeWallId) return activateWallpaper(firstId);
+            })
+            .then(function () {
+              return saveConf({ wallpaperMode: 'cover' });
+            })
+            .then(function () {
+              self.weAll = [];
+              self.wePage = 0;
+              self.sync();
+              self.checkWallData();
+              var msg = '已导入 ' + added + ' 张壁纸';
+              if (skipped) msg += '，' + skipped + ' 张没有可用的图';
+              if (chosen.length > list.length) msg += '（超出上限 ' + (chosen.length - list.length) + ' 个未处理）';
+              self.flash(msg);
+            });
         },
         onWallMode: function (v) {
           this.pick({ wallMode: v }, v === 'rotate' ? '已开启轮换' : '已固定');
@@ -2219,6 +3260,9 @@
           if (settings.activeWallId) this.onRemoveWall(settings.activeWallId);
           else this.pick({ wallpaperMode: 'off' }, '已关闭壁纸');
         },
+        toggleRailEntry: function () {
+          this.pick({ railEntry: !settings.railEntry }, settings.railEntry ? '已移除左栏入口' : '已加入左栏入口');
+        },
         onRoomCard: function (v) {
           this.pick({ roomCard: v }, v === 'compact' ? '房间卡片：极简' : '房间卡片：完整');
         },
@@ -2237,6 +3281,20 @@
           var v = Number(e && e.target && e.target.value);
           if (!isFinite(v)) return;
           this.pick({ panelOpacity: clamp(Math.round(v), 0, 100) });
+        },
+        onWallpaperPos: function (v) {
+          this.pick({ wallpaperPos: v }, '背景位置：' + { center: '居中', top: '靠上', bottom: '靠下', left: '靠左', right: '靠右' }[v]);
+        },
+        toggleDyn: function () {
+          this.pick({ dynWallpaper: !settings.dynWallpaper },
+            settings.dynWallpaper ? '已切回静态壁纸' : '已开启动态壁纸（视频）');
+        },
+        onWeRoot: function (e) {
+          var v = (e && e.target && e.target.value) || '';
+          this.pick({ weRoot: v.trim() }, 'WE 目录已记录');
+        },
+        toggleRecolor: function () {
+          this.pick({ wallpaperRecolor: !settings.wallpaperRecolor }, settings.wallpaperRecolor ? '换图不改配色' : '换图时重新取色');
         },
         onWallpaperBlur: function (e) {
           var v = Number(e && e.target && e.target.value);
@@ -2274,6 +3332,12 @@
         },
         onVariant: function (id) {
           this.pick({ variant: id }, '色调：' + VARIANTS[id].name);
+        },
+        onSeedPick: function (v) {
+          this.pick({ seedPick: v }, v === 'vivid' ? '取色：点缀色（最鲜艳）' : '取色：主色调（大面积）');
+        },
+        onSeedMode: function (v) {
+          this.pick({ seedMode: v }, v === 'literal' ? '配色：贴近原图' : '配色：Material You 标准');
         },
         onThemeLock: function (v) {
           this.pick({ themeLock: v }, v === 'off' ? '跟随客户端' : ('强制' + (v === 'dark' ? '深色' : '浅色')));
@@ -2417,7 +3481,7 @@
 
         // ================================================== 一级：总览
         if (this.page === 'root') {
-          c.push(h('div', { class: 'cell-title' }, 'MD3 皮肤'));
+          c.push(h('div', { class: 'cell-title' }, 'MD3 Wallpaper'));
           c.push(
             h('p', { class: 'bhchat-hint' }, '配色、壁纸、外观、图标、控件分组设置，点进去调整。'),
           );
@@ -2486,6 +3550,28 @@
               function (v) { self.onVariant(v); },
             ),
           );
+          c.push(h('div', { class: 'cell-title' }, '取色偏好'));
+          c.push(
+            choice(
+              [
+                ['dominant', '主色调', '取画面里面积最大的颜色（默认）'],
+                ['vivid', '点缀色', '取最鲜艳的那一小块，适合大面积深色+小亮点的壁纸'],
+              ],
+              this.seedPick,
+              function (v) { self.onSeedPick(v); },
+            ),
+          );
+          c.push(h('div', { class: 'cell-title' }, '配色方式'));
+          c.push(
+            choice(
+              [
+                ['md3', 'Material You 标准', '主色固定在 tone 80，深色种子会被提亮成浅色'],
+                ['literal', '贴近原图', '沿种子自身明度，深蓝仍是蓝，不会被提成淡紫'],
+              ],
+              this.seedMode,
+              function (v) { self.onSeedMode(v); },
+            ),
+          );
           c.push(h('div', { class: 'cell-title' }, '主题锁定'));
           c.push(h('p', { class: 'bhchat-hint' }, '有些房间自带浅色皮肤会把界面顶成浅色，这里可以钉死一种。'));
           c.push(
@@ -2506,6 +3592,13 @@
         if (this.page === 'wall') {
           c.push(backBar('壁纸'));
           c.push(h('div', { class: 'cell-title' }, '壁纸库'));
+          if (this.activeWallId) {
+            c.push(
+              h('div', { class: 'bhchat-actions' }, [
+                h('button', { class: 'bhchat-btn bhchat-btn-secondary', attrs: { type: 'button' }, on: { click: this.onRecolorCurrent } }, '重新取色（当前壁纸）'),
+              ]),
+            );
+          }
           if ((this.wallpapers || []).length) {
             c.push(
               h(
@@ -2562,7 +3655,126 @@
           );
           c.push(h('p', { class: 'bhchat-hint' }, '画质只对之后添加的图片生效；每张单独存，配置里只记元信息。'));
 
-          // 轮换
+          c.push(h('div', { class: 'cell-title' }, '从 Wallpaper Engine 导入'));
+          c.push(
+            h('div', { class: 'bhchat-list' }, [
+              row(
+                '动态壁纸（视频）',
+                this.dynWallpaper ? '导入 video 类壁纸时会记下视频路径，背景直接播放' : '只取静态预览图',
+                this.dynWallpaper,
+                function () {
+                  self.toggleDyn();
+                },
+              ),
+            ]),
+          );
+          if (this.dynWallpaper) {
+            c.push(
+              h('div', { class: 'bhchat-field' }, [
+                h('span', { class: 'bhchat-field-label' }, 'WE 壁纸根目录（用于拼视频路径）'),
+                h('input', {
+                  class: 'bhchat-native-input',
+                  attrs: { type: 'text' },
+                  domProps: { value: this.weRoot },
+                  on: { change: this.onWeRoot },
+                }),
+              ]),
+            );
+          }
+          c.push(
+            h('p', { class: 'bhchat-hint' },
+              '选 ...\\steamapps\\workshop\\content\\431960 目录可批量扫描；选单个壁纸文件夹则只导入那一个。' +
+              '视频/网页/场景类壁纸只能取静态预览图或视频首帧。'),
+          );
+          c.push(
+            h('div', { class: 'bhchat-actions' }, [
+              h(
+                'button',
+                { class: 'bhchat-btn bhchat-btn-secondary', attrs: { type: 'button' }, on: { click: this.onScanEngine } },
+                this.weBusy ? '扫描中…' : '扫描壁纸库',
+              ),
+            ]),
+          );
+
+          // 扫描结果：分页 + 勾选
+          if ((this.weAll || []).length) {
+            var pageCount = Math.max(1, Math.ceil(this.weAll.length / this.wePageSize));
+            var startIdx = this.wePage * this.wePageSize;
+            var pageItems = this.weAll.slice(startIdx, startIdx + this.wePageSize);
+            var chosenCount = this.weAll.filter(function (it) {
+              return it.on;
+            }).length;
+            c.push(
+              h('div', { class: 'cell-title' }, '扫描结果（共 ' + this.weAll.length + ' 个，已选 ' + chosenCount + '）'),
+            );
+            c.push(
+              h(
+                'div',
+                { class: 'bhchat-md3-wegrid' },
+                pageItems.map(function (it) {
+                  var badge = { video: '视频', scene: '场景' }[it.type] || it.type;
+                  var playable = it.type === 'video' && self.dynWallpaper;
+                  return h(
+                    'div',
+                    {
+                      class: 'bhchat-md3-weitem' + (it.on ? ' on' : ''),
+                      on: { click: function () { self.toggleWeItem(it); } },
+                    },
+                    [
+                      h('div', { class: 'bhchat-md3-wethumb-wrap' }, [
+                        it.thumb
+                          ? h('img', { class: 'bhchat-md3-wethumb', attrs: { src: it.thumb, alt: it.name } })
+                          : h('div', { class: 'bhchat-md3-wethumb bhchat-md3-wallitem-ph' }),
+                        h('span', { class: 'bhchat-md3-webadge' + (playable ? ' live' : '') },
+                          playable ? badge + '·动态' : badge),
+                        h('span', { class: 'bhchat-md3-wecheck' }, it.on ? '✓' : ''),
+                      ]),
+                      h('span', { class: 'bhchat-md3-wename' }, it.name),
+                    ],
+                  );
+                }),
+              ),
+            );
+            if (pageCount > 1) {
+              c.push(
+                h('div', { class: 'bhchat-actions' }, [
+                  h('button', { class: 'bhchat-btn bhchat-btn-secondary', attrs: { type: 'button' }, on: { click: function () { self.onWePage(-1); } } }, '上一页'),
+                  h('span', { class: 'bhchat-hint', style: { margin: '0 8px' } }, '第 ' + (this.wePage + 1) + ' / ' + pageCount + ' 页'),
+                  h('button', { class: 'bhchat-btn bhchat-btn-secondary', attrs: { type: 'button' }, on: { click: function () { self.onWePage(1); } } }, '下一页'),
+                ]),
+              );
+            }
+            c.push(
+              h('div', { class: 'bhchat-actions' }, [
+                h('button', { class: 'bhchat-btn bhchat-btn-secondary', attrs: { type: 'button' }, on: { click: function () { self.onWeSelectPage(true); } } }, '本页全选'),
+                h('button', { class: 'bhchat-btn bhchat-btn-secondary', attrs: { type: 'button' }, on: { click: function () { self.onWeSelectPage(false); } } }, '本页全不选'),
+                h('button', { class: 'bhchat-btn bhchat-btn-secondary', attrs: { type: 'button' }, on: { click: this.onWeClear } }, '清空选择'),
+              ]),
+            );
+            c.push(
+              h('div', { class: 'bhchat-actions' }, [
+                h('button', { class: 'bhchat-btn bhchat-btn-primary', attrs: { type: 'button' }, on: { click: this.onImportSelected } }, '导入所选'),
+                h('button', { class: 'bhchat-btn bhchat-btn-secondary', attrs: { type: 'button' }, on: { click: this.onCancelImport } }, '取消'),
+              ]),
+            );
+            c.push(h('p', { class: 'bhchat-hint' }, '网页类壁纸已在扫描时跳过；视频类只有开启动态壁纸才会播放。'));
+          }
+
+          // 用途
+          c.push(h('div', { class: 'cell-title' }, '用途'));
+          c.push(
+            choice(
+              [
+                ['cover', '作背景', '图铺满窗口，盖一层主题色遮罩（推荐）'],
+                ['color', '仅取色', '只拿图里的颜色，画布仍是纯色'],
+                ['off', '不使用', '图留着但不参与任何效果'],
+              ],
+              this.wallpaperMode,
+              function (v) { self.onWallpaperMode(v); },
+            ),
+          );
+
+          // 轮换（有壁纸就显示）
           if ((this.wallpapers || []).length) {
             c.push(h('div', { class: 'cell-title' }, '轮换'));
             c.push(
@@ -2603,23 +3815,28 @@
                   h('button', { class: 'bhchat-btn bhchat-btn-secondary', attrs: { type: 'button' }, on: { click: this.onRotateNow } }, '立即换一张'),
                 ]),
               );
+              if ((this.wallpapers || []).some(function (w) { return w.kind === 'video'; })) {
+                c.push(h('p', { class: 'bhchat-hint' }, '视频壁纸同样参与轮换：轮到它时会切到动态播放。'));
+              }
             }
           }
 
-          c.push(h('div', { class: 'cell-title' }, '用途'));
-          c.push(
-            choice(
-              [
-                ['cover', '作背景', '图铺满窗口，盖一层主题色遮罩（推荐）'],
-                ['color', '仅取色', '只拿图里的颜色，画布仍是纯色'],
-                ['off', '不使用', '图留着但不参与任何效果'],
-              ],
-              this.wallpaperMode,
-              function (v) { self.onWallpaperMode(v); },
-            ),
-          );
-
-          if (this.wallpaper && this.wallpaperMode === 'cover') {
+          // 视频条目下 settings.wallpaper 是空的，所以这里只判断用途
+          if (this.wallpaperMode === 'cover') {
+            c.push(h('div', { class: 'cell-title' }, '背景位置'));
+            c.push(
+              choice(
+                [
+                  ['center', '居中', '默认，左右上下都裁一点'],
+                  ['top', '靠上', '主体在上半部分时用'],
+                  ['bottom', '靠下', '主体在下半部分时用'],
+                  ['left', '靠左', '左侧是重点时用'],
+                  ['right', '靠右', '右侧是重点时用'],
+                ],
+                this.wallpaperPos,
+                function (v) { self.onWallpaperPos(v); },
+              ),
+            );
             c.push(h('div', { class: 'cell-title' }, '透明度与虚化'));
             c.push(
               slider('面板不透明度 ' + this.panelOpacity + '%', this.panelOpacity, 0, 100, 1, this.onOpacity.bind(this, 'panelOpacity')),
@@ -2639,6 +3856,18 @@
             );
             c.push(
               slider('壁纸模糊 ' + this.wallpaperBlur + 'px', this.wallpaperBlur, 0, 40, 1, this.onWallpaperBlur),
+            );
+            c.push(
+              h('div', { class: 'bhchat-list' }, [
+                row(
+                  '切换壁纸时重新取色',
+                  this.wallpaperRecolor ? '换图会更新整套配色' : '只换图，配色保持你现在调的',
+                  this.wallpaperRecolor,
+                  function () {
+                    self.toggleRecolor();
+                  },
+                ),
+              ]),
             );
           }
           c.push(h('div', { class: 'cell-title' }, '取色强度'));
@@ -2662,6 +3891,18 @@
               row('接管画布', this.canvas ? '客户端渐变/房间背景图已隐藏' : '保留客户端背景', this.canvas, function () {
                 self.onCanvas();
               }),
+            ]),
+          );
+          c.push(
+            h('div', { class: 'bhchat-list' }, [
+              row(
+                '左栏快捷入口',
+                this.railEntry ? '左侧竖栏有「MD3 皮肤」按钮，点开就是本面板' : '不加按钮，从 设置 → 插件 → 设置 进入',
+                this.railEntry,
+                function () {
+                  self.toggleRailEntry();
+                },
+              ),
             ]),
           );
           c.push(h('div', { class: 'cell-title' }, '房间卡片'));
@@ -2798,7 +4039,7 @@
   // -------------------------------------------------------------- 启动
 
   function activate() {
-    window.BHChat.registerPanel({ id: PLUGIN_ID, title: 'MD3 皮肤', component: buildPanel() });
+    window.BHChat.registerPanel({ id: PLUGIN_ID, title: 'MD3 Wallpaper', component: buildPanel() });
     loadConf().then(function () {
       return refresh();
     }).then(function () {
@@ -2822,6 +4063,8 @@
           enabled: settings.enabled,
           seed: settings.seed,
           variant: settings.variant,
+          seedMode: settings.seedMode,
+          seedPick: settings.seedPick,
           themeLock: settings.themeLock,
           canvas: settings.canvas,
           look: settings.look,
@@ -2835,7 +4078,15 @@
           slots: Object.assign({}, settings.slots),
           wallpaper: settings.wallpaper,
           wallpapers: (settings.wallpapers || []).map(function (w) {
-            return { id: w.id, name: w.name, seed: w.seed, size: w.size, thumb: w.thumb || '' };
+            return {
+              id: w.id,
+              name: w.name,
+              seed: w.seed,
+              size: w.size,
+              thumb: w.thumb || '',
+              kind: w.kind || 'image',
+              src: w.src || '',
+            };
           }),
           activeWallId: settings.activeWallId,
           wallMode: settings.wallMode,
@@ -2844,11 +4095,16 @@
           wallpaperMode: settings.wallpaperMode,
           wallpaperOpacity: settings.wallpaperOpacity,
           wallpaperBlur: settings.wallpaperBlur,
+          wallpaperPos: settings.wallpaperPos,
+          dynWallpaper: settings.dynWallpaper,
+          weRoot: settings.weRoot,
+          wallpaperRecolor: settings.wallpaperRecolor,
           panelBlur: settings.panelBlur,
           iconReplace: settings.iconReplace,
           panelOpacity: settings.panelOpacity,
           wallpaperQuality: settings.wallpaperQuality,
           roomCard: settings.roomCard,
+          railEntry: settings.railEntry,
           headerOpacity: settings.headerOpacity,
           shareOpacity: settings.shareOpacity,
           accentBoost: settings.accentBoost,
@@ -2882,11 +4138,18 @@
       addWallpaper: addWallpaper,
       removeWallpaper: removeWallpaper,
       useWallpaper: activateWallpaper,
+      restoreWallpaper: restoreActiveWall,
       readWallpaper: readWallData,
+      scanEngine: scanEngineByPath,
+      _seedInfo: function (hex) {
+        var rgb = parseHex(hex);
+        var lch = labToLch(rgbToLab(rgb));
+        return { lch: lch, hsl: rgbToHsl(rgb) };
+      },
       extractWallpaperSeed: extractSeedFromImage,
       compressWallpaper: compressWallpaper,
     };
-    console.log('[BetterHeyboxChat] md3-skin v1.14.1 已启动，主题色: ' + (current.seed || '未定'));
+    console.log('[BetterHeyboxChat] md3-skin v1.22.2 已启动，主题色: ' + (current.seed || '未定'));
   }
 
   if (window.BHChat) {
