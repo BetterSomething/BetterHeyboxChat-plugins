@@ -308,6 +308,20 @@
           recommendTopics: [],
           hotTopics: [],
           links: [],
+          followLinks: [],
+          followLoading: false,
+          followLoadingMore: false,
+          followError: '',
+          followFooterError: '',
+          followHasMore: true,
+          followLastval: '',
+          followOffset: 0,
+          followFriends: [],
+          friendsLoading: false,
+          friendsHasMore: false,
+          friendsLoaded: false,
+          filterUserId: '',
+          filterName: '',
           loading: false,
           loadingMore: false,
           error: '',
@@ -344,6 +358,20 @@
           this.recommendTopics = [];
           this.hotTopics = [];
           this.links = [];
+          this.followLinks = [];
+          this.followLoading = false;
+          this.followLoadingMore = false;
+          this.followError = '';
+          this.followFooterError = '';
+          this.followHasMore = true;
+          this.followLastval = '';
+          this.followOffset = 0;
+          this.followFriends = [];
+          this.friendsLoading = false;
+          this.friendsHasMore = false;
+          this.friendsLoaded = false;
+          this.filterUserId = '';
+          this.filterName = '';
           this.detailOpen = false;
           this.loading = false;
           this.loadingMore = false;
@@ -367,6 +395,8 @@
           if (tab === 'follow') {
             this.tab = 'follow';
             this.detailHint = '';
+            if (!this.followLinks.length && !this.followLoading) this.loadFollow(true);
+            this.loadFriends();
             return;
           }
           if (this.tab === 'recommend') {
@@ -374,6 +404,124 @@
             return;
           }
           this.enterRecommend();
+        },
+        loadFriends: function () {
+          var self = this;
+          var E = this.extract();
+          if (!E || this.friendsLoading) return;
+          if (this.followFriends.length || this.friendsLoaded) return;
+          this.friendsLoading = true;
+          signedGet(E.API_FOLLOWING_LIST, {})
+            .then(function (res) {
+              var parsed = E.parseFollowingList(res);
+              if (parsed.ok) {
+                self.followFriends = parsed.friends;
+                self.friendsHasMore = parsed.hasMore;
+                self.friendsLoaded = true;
+              }
+            })
+            .catch(function (err) {
+              console.warn('[BetterHeyboxChat] heybox-bbs friends:', err && err.message);
+            })
+            .then(function () {
+              self.friendsLoading = false;
+            });
+        },
+        onSelectFriend: function (friend) {
+          var nextId = friend ? String(friend.userid) : '';
+          if (this.filterUserId === nextId) return;
+          if (!nextId && !this.filterUserId) return;
+          // 与官方客户端一致：点开头像即本地清零红点（不调已读接口）
+          if (friend && friend.unread > 0) friend.unread = 0;
+          this.filterUserId = nextId;
+          this.filterName = friend ? friend.name : '';
+          this.loadFollow(true);
+        },
+        loadFollow: function (reset) {
+          var self = this;
+          var E = this.extract();
+          if (!E) {
+            this.followError = '社区模块未就绪';
+            return;
+          }
+          if (this.followLoading || this.followLoadingMore) return;
+          if (!reset && !this.followHasMore) return;
+
+          if (reset) {
+            this.followLoading = true;
+            this.followError = '';
+            this.followFooterError = '';
+            this.followHasMore = true;
+            this.followLastval = '';
+            this.followOffset = 0;
+            this.followLinks = [];
+          } else {
+            this.followLoadingMore = true;
+            this.followFooterError = '';
+          }
+
+          var params = { offset: reset ? 0 : this.followOffset, limit: E.PAGE_LIMIT };
+          if (!reset && this.followLastval) params.lastval = this.followLastval;
+          var url = E.API_FOLLOW_FEEDS;
+          if (this.filterUserId) {
+            url = E.API_FOLLOW_USER_EVENTS;
+            params.userid = this.filterUserId;
+            params.from_source = 'events_list';
+          }
+
+          signedGet(url, params)
+            .then(function (res) {
+              var parsed = E.parseFollowPayload(res);
+              if (!parsed.ok) throw new Error('status not ok');
+              var fresh = E.filterRenderableLinks(parsed.links);
+              if (reset) {
+                self.followLinks = fresh;
+              } else {
+                var seen = {};
+                var i;
+                for (i = 0; i < self.followLinks.length; i++) {
+                  seen[E.pickLinkId(self.followLinks[i])] = true;
+                }
+                for (i = 0; i < fresh.length; i++) {
+                  var id = E.pickLinkId(fresh[i]);
+                  if (!id || seen[id]) continue;
+                  seen[id] = true;
+                  self.followLinks.push(fresh[i]);
+                }
+              }
+              self.followLastval = parsed.lastval;
+              self.followOffset = self.followLinks.length;
+              self.followHasMore = parsed.hasMore;
+              self.followError = '';
+            })
+            .catch(function (err) {
+              console.warn('[BetterHeyboxChat] heybox-bbs follow feed:', err && err.message);
+              if (reset) {
+                self.followError = '加载失败';
+                self.followHasMore = false;
+              } else {
+                self.followFooterError = '加载失败，点击重试';
+              }
+            })
+            .then(function () {
+              self.followLoading = false;
+              self.followLoadingMore = false;
+            });
+        },
+        refreshFollow: function () {
+          if (this.tab !== 'follow') return;
+          if (this.followLoading || this.followLoadingMore) return;
+          this.loadFollow(true);
+        },
+        onFollowScroll: function (ev) {
+          var E = this.extract();
+          if (!E || this.tab !== 'follow') return;
+          var el = ev && ev.target;
+          if (!el) return;
+          var remain = el.scrollHeight - el.scrollTop - el.clientHeight;
+          if (E.shouldLoadMore(remain, this.followLoading || this.followLoadingMore, this.followHasMore)) {
+            this.loadFollow(false);
+          }
         },
         onSelectTopic: function (topicId) {
           var next = topicId == null ? '' : String(topicId);
@@ -579,6 +727,161 @@
           }
           return h('aside', { class: 'bhchat-bbs-rail large-scrollbar' }, nodes);
         },
+        renderFriendRail: function (h) {
+          var self = this;
+          if (!this.followFriends.length) return null;
+          function friendNode(friend, isActive) {
+            var kids = [
+              h('div', { class: 'bhchat-bbs-friend-avatar-wrap' }, [
+                friend.avatar
+                  ? h('img', { class: 'bhchat-bbs-friend-avatar', attrs: { src: friend.avatar, alt: '' } })
+                  : h('div', { class: 'bhchat-bbs-friend-avatar bhchat-bbs-friend-avatar-empty' }),
+                friend.unread > 0 ? h('i', { class: 'bhchat-bbs-friend-dot' }) : null,
+              ]),
+              h('span', { class: 'bhchat-bbs-friend-name' }, friend.name || '盒友'),
+            ];
+            return h(
+              'button',
+              {
+                class: { 'bhchat-bbs-friend': true, 'is-active': isActive },
+                attrs: { type: 'button', title: friend.name || '' },
+                on: {
+                  click: function () {
+                    self.onSelectFriend(isActive ? null : friend);
+                  },
+                },
+              },
+              kids,
+            );
+          }
+          var nodes = [];
+          var allActive = !this.filterUserId;
+          nodes.push(
+            h(
+              'button',
+              {
+                class: { 'bhchat-bbs-friend': true, 'is-active': allActive },
+                attrs: { type: 'button', title: '全部关注' },
+                on: {
+                  click: function () {
+                    self.onSelectFriend(null);
+                  },
+                },
+              },
+              [
+                h('div', { class: 'bhchat-bbs-friend-avatar bhchat-bbs-friend-avatar-all' }, [
+                  h('i', { class: 'iconfont icon-clockwise-bold' }),
+                ]),
+                h('span', { class: 'bhchat-bbs-friend-name' }, '全部'),
+              ],
+            ),
+          );
+          for (var i = 0; i < this.followFriends.length; i++) {
+            var f = this.followFriends[i];
+            nodes.push(friendNode(f, !!this.filterUserId && String(f.userid) === this.filterUserId));
+          }
+          return h('div', { class: 'bhchat-bbs-friends' }, nodes);
+        },
+        renderFollowBody: function (h, E) {
+          var self = this;
+          var nodes = [];
+          var rail = this.renderFriendRail(h);
+          if (rail) nodes.push(rail);
+          if (this.filterUserId) {
+            nodes.push(
+              h('div', { class: 'bhchat-bbs-filter-bar' }, [
+                h('span', { class: 'bhchat-bbs-filter-label' }, '正在看：' + (this.filterName || this.filterUserId)),
+                h(
+                  'button',
+                  {
+                    class: 'bhchat-bbs-retry',
+                    attrs: { type: 'button' },
+                    on: {
+                      click: function () {
+                        self.onSelectFriend(null);
+                      },
+                    },
+                  },
+                  '显示全部',
+                ),
+              ]),
+            );
+          }
+          if (this.detailHint) {
+            nodes.push(
+              h('div', { class: 'bhchat-bbs-hint' }, [
+                h('span', this.detailHint),
+                h(
+                  'button',
+                  {
+                    class: 'bhchat-bbs-retry',
+                    attrs: { type: 'button' },
+                    on: { click: self.onOpenHintLink },
+                  },
+                  '在浏览器打开该帖',
+                ),
+              ]),
+            );
+          }
+          if (this.followError === '加载失败' || this.followError === '社区模块未就绪') {
+            nodes.push(
+              h('div', { class: 'bhchat-bbs-state' }, [
+                h('div', this.followError),
+                h('div', { class: 'bhchat-bbs-state-actions' }, [
+                  hBtn(h, '重试', 'primary', function () {
+                    self.loadFollow(true);
+                  }),
+                  hBtn(h, '在浏览器打开', 'secondary', self.onOpenHome),
+                ]),
+              ]),
+            );
+            return nodes;
+          }
+          if (this.followLoading && !this.followLinks.length) {
+            nodes.push(h('div', { class: 'bhchat-bbs-state' }, [h('div', { class: 'text-tx-3' }, '加载中…')]));
+            return nodes;
+          }
+          if (!this.followLinks.length) {
+            nodes.push(
+              h('div', { class: 'bhchat-bbs-state' }, [
+                h('div', '还没有关注内容'),
+                h('div', { class: 'bhchat-bbs-state-actions' }, [
+                  hBtn(h, '看看推荐', 'primary', function () {
+                    self.onSelectTab('recommend');
+                  }),
+                ]),
+              ]),
+            );
+            return nodes;
+          }
+          for (var i = 0; i < this.followLinks.length; i++) {
+            nodes.push(renderCard(h, self, E, this.followLinks[i]));
+          }
+          if (this.followFooterError) {
+            nodes.push(
+              h('div', { class: 'bhchat-bbs-footer' }, [
+                h(
+                  'button',
+                  {
+                    class: 'bhchat-bbs-retry',
+                    attrs: { type: 'button' },
+                    on: {
+                      click: function () {
+                        self.loadFollow(false);
+                      },
+                    },
+                  },
+                  this.followFooterError,
+                ),
+              ]),
+            );
+          } else if (this.followLoadingMore) {
+            nodes.push(h('div', { class: 'bhchat-bbs-footer' }, '加载中…'));
+          } else if (!this.followHasMore && this.followLinks.length > 8) {
+            nodes.push(h('div', { class: 'bhchat-bbs-footer' }, '没有更多了'));
+          }
+          return nodes;
+        },
         renderBody: function (h, E) {
           var self = this;
           if (!E) {
@@ -589,18 +892,7 @@
               ]),
             ];
           }
-          if (this.tab === 'follow') {
-            return [
-              h('div', { class: 'bhchat-bbs-state' }, [
-                h('div', '关注流即将支持'),
-                h('div', { class: 'bhchat-bbs-state-actions' }, [
-                  hBtn(h, '查看推荐', 'primary', function () {
-                    self.onSelectTab('recommend');
-                  }),
-                ]),
-              ]),
-            ];
-          }
+          if (this.tab === 'follow') return this.renderFollowBody(h, E);
           var nodes = [];
           if (this.detailHint) {
             nodes.push(
@@ -718,16 +1010,22 @@
           ]),
           h('div', { class: 'bhchat-bbs-title-grow' }),
         ];
-        if (this.tab === 'recommend') {
+        if (this.tab === 'recommend' || this.tab === 'follow') {
+          var busy = this.tab === 'recommend' ? this.loading && !this.loadingMore : this.followLoading && !this.followLoadingMore;
           titleKids.push(
             h(
               'button',
               {
-                class: { 'bhchat-bbs-refresh': true, 'is-busy': this.loading && !this.loadingMore },
-                attrs: { type: 'button', disabled: this.loading || this.loadingMore, title: '刷新' },
+                class: { 'bhchat-bbs-refresh': true, 'is-busy': busy },
+                attrs: {
+                  type: 'button',
+                  disabled: this.tab === 'recommend' ? this.loading || this.loadingMore : this.followLoading || this.followLoadingMore,
+                  title: '刷新',
+                },
                 on: {
                   click: function () {
-                    self.refresh();
+                    if (self.tab === 'follow') self.refreshFollow();
+                    else self.refresh();
                   },
                 },
               },
@@ -747,7 +1045,8 @@
                   class: 'bhchat-bbs-list large-scrollbar',
                   on: {
                     scroll: function (ev) {
-                      self.onScroll(ev);
+                      if (self.tab === 'follow') self.onFollowScroll(ev);
+                      else self.onScroll(ev);
                     },
                   },
                 },

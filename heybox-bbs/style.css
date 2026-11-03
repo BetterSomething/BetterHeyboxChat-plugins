@@ -314,6 +314,110 @@
   justify-content: center;
 }
 
+.bhchat-bbs-friends {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 4px 0 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.bhchat-bbs-friends::-webkit-scrollbar {
+  display: none;
+}
+
+.bhchat-bbs-friend {
+  flex: none;
+  width: 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  padding: 4px 2px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.bhchat-bbs-friend:hover {
+  background: var(--opacity-2);
+}
+
+.bhchat-bbs-friend-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--fill-1);
+  box-sizing: border-box;
+}
+
+.bhchat-bbs-friend-avatar-wrap {
+  position: relative;
+  width: 44px;
+  height: 44px;
+}
+
+.bhchat-bbs-friend-dot {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fa5a5a;
+  border: 2px solid var(--fill-2);
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.bhchat-bbs-friend.is-active .bhchat-bbs-friend-avatar {
+  box-shadow: 0 0 0 2px var(--brand-text);
+}
+
+.bhchat-bbs-friend-avatar-empty {
+  background: var(--fill-1);
+}
+
+.bhchat-bbs-friend-avatar-all {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-2);
+  font-size: 18px;
+}
+
+.bhchat-bbs-friend-name {
+  max-width: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-2);
+}
+
+.bhchat-bbs-friend.is-active .bhchat-bbs-friend-name {
+  color: var(--brand-text);
+  font-weight: 700;
+}
+
+.bhchat-bbs-filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  background: var(--fill-1);
+  font-size: 13px;
+  color: var(--text-2);
+}
+
 .bhchat-bbs-footer {
   padding: 16px 0 4px;
   text-align: center;

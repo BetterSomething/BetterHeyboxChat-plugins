@@ -19,6 +19,9 @@
   var API_FEEDS = API_ORIGIN + '/bbs/app/feeds';
   var API_TOPIC_FEEDS = API_ORIGIN + '/bbs/app/topic/feeds';
   var API_CATEGORIES = API_ORIGIN + '/bbs/app/topic/categories';
+  var API_FOLLOW_FEEDS = API_ORIGIN + '/bbs/app/profile/subscribed/events';
+  var API_FOLLOW_USER_EVENTS = API_ORIGIN + '/bbs/app/profile/events';
+  var API_FOLLOWING_LIST = API_ORIGIN + '/bbs/app/profile/following/simple_list';
   var PAGE_LIMIT = 20;
 
   function asText(value) {
@@ -223,12 +226,122 @@
     return 'https://www.xiaoheihe.cn/app/bbs/link/' + encodeURIComponent(String(linkId));
   }
 
+  // 关注流响应：result.moments[] 是多态卡片（BBSLinkObj 等），
+  // content_type 4=帖子、1/33/36/38=资讯、40=转发、42=游戏评价、18=登录提示、22=推荐开关等。
+  // 只保留能直接渲染的帖子类卡片（42 单独归一化），其余丢弃。
+  var FOLLOW_RENDERABLE_TYPES = { 4: 1, 1: 1, 33: 1, 36: 1, 38: 1, 39: 1, 35: 1, 37: 1, 40: 1, 42: 1 };
+
+  function isRenderableMoment(moment) {
+    if (!moment || typeof moment !== 'object') return false;
+    var type = Number(moment.content_type);
+    if (!FOLLOW_RENDERABLE_TYPES[type]) return false;
+    if (isAdCard(moment)) return false;
+    // 42 是游戏评价卡：本体无 linkid 内容，需要 games[0] 撑起来，单独判断
+    return true;
+  }
+
+  // 关注流里的 42 卡是"用户给游戏打分+短评"，转成与帖子卡兼容的形状：
+  // 标题取游戏名，描述取评价文字，点击打开游戏话题帖。
+  function normalizeGameReviewCard(moment) {
+    var game = Array.isArray(moment.games) && moment.games[0] ? moment.games[0] : null;
+    var inner = moment.link && typeof moment.link === 'object' ? moment.link : {};
+    var desc = asText(inner.description);
+    if (!desc) return null;
+    var gameId = game ? (game.steam_appid != null ? game.steam_appid : game.appid) : null;
+    var topicId = inner.topics && inner.topics[0] ? inner.topics[0].topic_id : '';
+    return {
+      linkid: pickLinkId(inner) || (moment.linkid != null ? String(moment.linkid) : ''),
+      title: game ? asText(game.name) : (topicId ? '' : '游戏评价'),
+      description: desc,
+      user: inner.user || moment.user,
+      thumbs: [],
+      imgs: [],
+      topics: Array.isArray(inner.topics) ? inner.topics : [],
+      topic_id: topicId,
+      comment_num: inner.comment_num != null ? inner.comment_num : 0,
+      up: inner.up != null ? inner.up : 0,
+      create_at: inner.create_at || moment.create_at,
+      create_str: inner.create_str || moment.create_str,
+      score: inner.score != null ? inner.score : null,
+      _review_game_id: gameId == null ? '' : String(gameId),
+    };
+  }
+
+  // 关注流 moments → 可渲染的帖子卡列表。42 游戏评价卡会被归一化，无法归一化的丢弃。
+  function pickFollowLinks(moments) {
+    if (!Array.isArray(moments)) return [];
+    var out = [];
+    for (var i = 0; i < moments.length; i++) {
+      var moment = moments[i];
+      if (!isRenderableMoment(moment)) continue;
+      if (Number(moment.content_type) === 42) {
+        var normalized = normalizeGameReviewCard(moment);
+        if (normalized && normalized.linkid) out.push(normalized);
+        continue;
+      }
+      if (!pickLinkId(moment)) continue;
+      out.push(moment);
+    }
+    return out;
+  }
+
+  // 关注流响应解析：{ ok, links, lastval, hasMore }
+  function parseFollowPayload(res) {
+    var data = unwrapHttp(res);
+    if (!data || data.status !== 'ok') {
+      return { ok: false, links: [], lastval: '', hasMore: false };
+    }
+    var result = data.result && typeof data.result === 'object' ? data.result : {};
+    var links = pickFollowLinks(result.moments);
+    var lastval = result.lastval != null && result.lastval !== '' ? String(result.lastval) : '';
+    return { ok: true, links: links, lastval: lastval, hasMore: links.length > 0 };
+  }
+
+  // 好友列表（following/simple_list）：{ ok, friends: [{userid,name,avatar,level}], hasMore }
+  function parseFollowingList(res) {
+    var data = unwrapHttp(res);
+    if (!data || data.status !== 'ok' || !data.result) {
+      return { ok: false, friends: [], hasMore: false };
+    }
+    var raw = Array.isArray(data.result.follow_list) ? data.result.follow_list : [];
+    var friends = [];
+    for (var i = 0; i < raw.length; i++) {
+      var u = raw[i];
+      if (!u || typeof u !== 'object') continue;
+      var uid = u.userid != null && u.userid !== '' ? String(u.userid) : '';
+      if (!uid) continue;
+      friends.push({
+        userid: uid,
+        name: asText(u.username || u.name),
+        avatar: asText(u.avartar || u.avatar),
+        level: userLevel(u),
+        unread: u.unread != null ? Number(u.unread) || 0 : 0,
+      });
+    }
+    return { ok: true, friends: friends, hasMore: Number(data.result.has_more) > 0 };
+  }
+
+  function userLevel(user) {
+    if (user.level_info && user.level_info.level != null && user.level_info.level !== '') {
+      var n = Number(user.level_info.level);
+      if (isFinite(n)) return n;
+    }
+    if (user.level != null && user.level !== '') {
+      var m = Number(user.level);
+      if (isFinite(m)) return m;
+    }
+    return null;
+  }
+
   return {
     BBS_HOME_URL: BBS_HOME_URL,
     API_ORIGIN: API_ORIGIN,
     API_FEEDS: API_FEEDS,
     API_TOPIC_FEEDS: API_TOPIC_FEEDS,
     API_CATEGORIES: API_CATEGORIES,
+    API_FOLLOW_FEEDS: API_FOLLOW_FEEDS,
+    API_FOLLOW_USER_EVENTS: API_FOLLOW_USER_EVENTS,
+    API_FOLLOWING_LIST: API_FOLLOWING_LIST,
     PAGE_LIMIT: PAGE_LIMIT,
     isAdCard: isAdCard,
     pickLinkId: pickLinkId,
@@ -243,6 +356,9 @@
     groupTopicChips: groupTopicChips,
     shouldLoadMore: shouldLoadMore,
     parseListPayload: parseListPayload,
+    parseFollowPayload: parseFollowPayload,
+    parseFollowingList: parseFollowingList,
+    pickFollowLinks: pickFollowLinks,
     filterRenderableLinks: filterRenderableLinks,
     browserLinkUrl: browserLinkUrl,
   };
