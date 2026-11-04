@@ -8,6 +8,7 @@
   var ROUTE_NAME = 'bhchat-bbs';
   var ROUTE_PATH = '/bbs';
   var ENTRY_ID = 'bhchat-bbs-entry';
+  var SIGN_ENTRY_ID = 'bhchat-bbs-sign-entry';
   var EXTRACT_FILE = 'extract.js';
   var DETAIL_WAIT_MS = 800;
 
@@ -192,15 +193,50 @@
     return wrap;
   }
 
+  function buildSignEntry() {
+    var wrap = document.createElement('div');
+    wrap.id = SIGN_ENTRY_ID;
+    wrap.className = 'tool-container flex-col-items-center relative pb-[6px] bhchat-bbs-sign-entry';
+    wrap.innerHTML =
+      '<div class="cpt-shortcut-block-wrapper">' +
+      '<div class="tool-shortcuts shortcut-block circle relative" title="签到">' +
+      '<svg class="bhchat-bbs-sign-icon" xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28" fill="none" aria-label="签到">' +
+      '<rect x="5" y="6" width="18" height="17" rx="3.5" stroke="currentColor" stroke-width="1.8"/>' +
+      '<path d="M9.5 4v4M18.5 4v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>' +
+      '<path d="M9.5 16l2.5 2.5 5-5.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '</svg>' +
+      '</div>' +
+      '<i class="bhchat-bbs-sign-dot" style="display:none"></i>' +
+      '</div>';
+    wrap.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      openBbs();
+      setSignPanelOpen(true);
+    });
+    return wrap;
+  }
+
   function ensureEntry() {
     var layout = document.querySelector('.left-sidebar-layout');
     if (!layout) return null;
     var mini = layout.querySelector('.tool-container');
     var rooms = layout.querySelector('.cpt-room-container');
     if (!mini || !rooms) return document.getElementById(ENTRY_ID);
-    var entry = document.getElementById(ENTRY_ID) || buildEntry();
+    var entry = document.getElementById(ENTRY_ID);
+    var signEntry = document.getElementById(SIGN_ENTRY_ID);
+    // 两个都已在正确位置时完全不动 DOM（observer 会因 insertBefore 再次触发造成死循环）
+    if (entry && signEntry && entry.previousElementSibling === mini && signEntry.previousElementSibling === entry) {
+      syncEntryActive();
+      return entry;
+    }
+    if (!entry) entry = buildEntry();
     if (entry.previousElementSibling !== mini || entry.nextElementSibling !== rooms) {
       mini.parentNode.insertBefore(entry, rooms);
+    }
+    if (!signEntry) signEntry = buildSignEntry();
+    if (signEntry.previousElementSibling !== entry) {
+      entry.parentNode.insertBefore(signEntry, entry.nextSibling);
     }
     syncEntryActive();
     return entry;
@@ -208,11 +244,18 @@
 
   function watchSidebar() {
     if (entryObs) return;
+    var debounced = 0;
     entryObs = new MutationObserver(function () {
-      ensureEntry();
+      if (debounced) return;
+      debounced = setTimeout(function () {
+        debounced = 0;
+        ensureEntry();
+        ensureSignPanel();
+      }, 100);
     });
     entryObs.observe(document.body, { childList: true, subtree: true });
     ensureEntry();
+    ensureSignPanel();
   }
 
   function hBtn(h, text, kind, onClick) {
@@ -1106,6 +1149,253 @@
     });
   }
 
+  // ===== 左栏签到面板 =====
+  var signPanelOpen = false;
+  var signPanelHost = null;
+  var signStore = { signed: null, streak: 0, awards: [], level: null };
+  var signCalStore = { days: {}, todayKey: '' };
+  var signCalLoading = false;
+  var signMsg = '';
+  var replenishing = '';
+  var signVue = null;
+
+  function setSignPanelOpen(open) {
+    signPanelOpen = !!open;
+    if (signPanelOpen) {
+      markSignEntryRead();
+      loadSignData();
+    }
+    renderSignPanel();
+    if (signPanelOpen) {
+      positionSignPanel(document.getElementById(SIGN_ENTRY_ID));
+    }
+  }
+
+  function markSignEntryRead() {
+    var dot = document.querySelector('#' + SIGN_ENTRY_ID + ' .bhchat-bbs-sign-dot');
+    if (dot) dot.style.display = 'none';
+  }
+
+  function syncSignDot() {
+    var dot = document.querySelector('#' + SIGN_ENTRY_ID + ' .bhchat-bbs-sign-dot');
+    if (!dot) return;
+    var show = signStore.signed === false && !signPanelOpen;
+    dot.style.display = show ? '' : 'none';
+  }
+
+  function signedTodayKey() {
+    var now = new Date(Date.now() + 28800 * 1000);
+    return (
+      now.getUTCFullYear() +
+      '-' +
+      ('0' + (now.getUTCMonth() + 1)).slice(-2) +
+      '-' +
+      ('0' + now.getUTCDate()).slice(-2)
+    );
+  }
+
+  function loadSignData() {
+    var E = getExtract();
+    if (!E || typeof signedGet !== 'function') return;
+    var needTask = signStore.signed === null;
+    var needCal = !Object.keys(signCalStore.days).length || signCalStore.todayKey !== signedTodayKey();
+    if (needTask) {
+      signedGet(E.API_TASK_LIST, {})
+        .then(function (res) {
+          var parsed = E.parseTaskList(res);
+          if (parsed.ok) {
+            signStore = parsed;
+            syncSignDot();
+            renderSignPanel();
+          }
+        })
+        .catch(function (err) {
+          console.warn('[BetterHeyboxChat] heybox-bbs sign:', err && err.message);
+        });
+    }
+    if (needCal) loadSignCal();
+  }
+
+  function loadSignCal() {
+    var E = getExtract();
+    if (!E || signCalLoading || typeof signedGet !== 'function') return;
+    signCalLoading = true;
+    signedGet(E.API_SIGN_LIST, {})
+      .then(function (res) {
+        var parsed = E.parseSignList(res);
+        if (parsed.ok) {
+          signCalStore = parsed;
+          renderSignPanel();
+        }
+      })
+      .catch(function (err) {
+        console.warn('[BetterHeyboxChat] heybox-bbs sign cal:', err && err.message);
+      })
+      .then(function () {
+        signCalLoading = false;
+      });
+  }
+
+  function doReplenish(dayKey) {
+    var E = getExtract();
+    if (!E || replenishing || typeof signedGet !== 'function') return;
+    var day = signCalStore.days[dayKey];
+    if (!day || day.signed) return;
+    replenishing = dayKey;
+    signMsg = '';
+    renderSignPanel();
+    signedGet(E.API_SIGN_REPLENISH, { date: day.ts })
+      .then(function (res) {
+        var parsed = E.parseReplenish(res);
+        if (parsed.ok) {
+          day.signed = true;
+          signMsg = '补签成功';
+          signStore.signed = null;
+          loadSignData();
+        } else {
+          signMsg = parsed.msg || '补签失败';
+        }
+      })
+      .catch(function () {
+        signMsg = '补签失败';
+      })
+      .then(function () {
+        replenishing = '';
+        renderSignPanel();
+      });
+  }
+
+  function renderSignPanel() {
+    if (!signPanelHost) return;
+    signPanelHost.hidden = !signPanelOpen;
+    if (!signPanelOpen) {
+      syncSignDot();
+      return;
+    }
+    var app = document.getElementById('app');
+    var vueRoot = app && app.__vue__;
+    var VueCtor = vueRoot && vueRoot.$options && vueRoot.$options.Vue ? vueRoot.$options.Vue : (vueRoot && vueRoot.constructor);
+    if (!VueCtor) return;
+    if (!signVue) {
+      signVue = new VueCtor({ render: renderSignPanelBody });
+      signVue.$mount();
+      signPanelHost.appendChild(signVue.$el);
+    } else {
+      signVue.$forceUpdate();
+    }
+    syncSignDot();
+  }
+
+  function renderSignPanelBody(h) {
+    var s = signStore;
+    var kids = [];
+    var statusText = s.signed === false ? '今日未签到' : s.signed ? '已签到' : '加载中…';
+    var streak = s.streak ? '已连续 ' + s.streak + ' 天' : '';
+    kids.push(
+      h('div', { class: 'bhchat-bbs-signp-row' }, [
+        h('div', { class: 'bhchat-bbs-signp-title' }, [
+          h('span', { class: { 'bhchat-bbs-signp-state': true, 'is-signed': s.signed === true } }, statusText),
+          streak ? h('span', { class: 'bhchat-bbs-signp-streak' }, streak) : null,
+        ]),
+        s.awards.length ? h('div', { class: 'bhchat-bbs-signp-awards' }, '奖励 ' + s.awards.join(' / ')) : null,
+      ]),
+    );
+    kids.push(renderSignCalendarBody(h));
+    if (signMsg) kids.push(h('div', { class: 'bhchat-bbs-signp-msg' }, signMsg));
+    kids.push(
+      h('div', { class: 'bhchat-bbs-signp-foot' }, '今日签到请在手机小黑盒 App 完成'),
+    );
+    return h('div', { class: 'bhchat-bbs-signp' }, kids);
+  }
+
+  function renderSignCalendarBody(h) {
+    var cal = signCalStore;
+    var nodes = [];
+    if (!Object.keys(cal.days).length) {
+      nodes.push(h('div', { class: 'bhchat-bbs-signp-cal-empty' }, signCalLoading ? '日历加载中…' : '日历加载失败'));
+      return h('div', { class: 'bhchat-bbs-signp-cal' }, nodes);
+    }
+    var now = new Date(Date.now() + 28800 * 1000);
+    var year = now.getUTCFullYear();
+    var month = now.getUTCMonth();
+    var firstDay = new Date(Date.UTC(year, month, 1));
+    var daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+    var startWeek = firstDay.getUTCDay();
+    var cells = [];
+    var i;
+    for (i = 0; i < startWeek; i++) cells.push(h('div', { class: 'bhchat-bbs-cal-cell is-empty' }));
+    var signedThisMonth = 0;
+    for (i = 1; i <= daysInMonth; i++) {
+      var key = year + '-' + ('0' + (month + 1)).slice(-2) + '-' + ('0' + i).slice(-2);
+      var day = cal.days[key];
+      var isToday = key === cal.todayKey;
+      var isFuture = key > cal.todayKey;
+      var signed = day && day.signed;
+      if (signed) signedThisMonth++;
+      var cellKids = [h('span', String(i))];
+      if (signed) cellKids.push(h('i', { class: 'bhchat-bbs-cal-check' }, '✓'));
+      cells.push(
+        h('div', {
+          class: {
+            'bhchat-bbs-cal-cell': true,
+            'is-signed': !!signed,
+            'is-today': isToday,
+            'is-future': isFuture,
+            'is-miss': !signed && !isFuture && !!day,
+            'is-busy': replenishing === key,
+          },
+          attrs: { 'data-key': key, title: !signed && !isFuture && day ? i + ' 日未签，点击补签' : '' },
+          on:
+            !signed && !isFuture && day
+              ? {
+                  click: function (ev) {
+                    var el = ev && ev.currentTarget;
+                    var k = el && el.getAttribute('data-key');
+                    if (k) doReplenish(k);
+                  },
+                }
+              : {},
+        }, cellKids),
+      );
+    }
+    nodes.push(h('div', { class: 'bhchat-bbs-signp-cal-title' }, year + '年' + (month + 1) + '月 · 已签 ' + signedThisMonth + ' 天'));
+    var week = ['日', '一', '二', '三', '四', '五', '六'];
+    var weekRow = [];
+    for (i = 0; i < week.length; i++) weekRow.push(h('div', { class: 'bhchat-bbs-cal-week' }, week[i]));
+    nodes.push(h('div', { class: 'bhchat-bbs-cal-grid is-week' }, weekRow));
+    nodes.push(h('div', { class: 'bhchat-bbs-cal-grid' }, cells));
+    return h('div', { class: 'bhchat-bbs-signp-cal' }, nodes);
+  }
+
+  function ensureSignPanel() {
+    var entry = document.getElementById(SIGN_ENTRY_ID);
+    if (!entry) return;
+    if (!signPanelHost) {
+      signPanelHost = document.createElement('div');
+      signPanelHost.className = 'bhchat-bbs-signp-host';
+      signPanelHost.hidden = true;
+      document.body.appendChild(signPanelHost);
+      document.addEventListener('click', function (ev) {
+        if (!signPanelOpen) return;
+        var t = ev.target;
+        if (signPanelHost.contains(t)) return;
+        if (t.closest && (t.closest('#' + SIGN_ENTRY_ID) || t.closest('.bhchat-bbs-signp-host'))) return;
+        setSignPanelOpen(false);
+      });
+      window.addEventListener('resize', function () {
+        if (signPanelOpen) renderSignPanel();
+      });
+    }
+    if (signPanelOpen) positionSignPanel(entry);
+  }
+
+  function positionSignPanel(entry) {
+    if (!signPanelHost || !entry) return;
+    var rect = entry.getBoundingClientRect();
+    signPanelHost.style.left = Math.round(rect.right + 10) + 'px';
+    signPanelHost.style.top = Math.max(12, Math.round(rect.top - 20)) + 'px';
+  }
+
   function buildPanelComponent() {
     return {
       name: 'BhchatBbsPanel',
@@ -1147,6 +1437,10 @@
     }
     addRoute();
     watchSidebar();
+    // 延迟拉签到状态，驱动左栏红点
+    setTimeout(function () {
+      loadSignData();
+    }, 3000);
     if (window.BHChat && window.BHChat.registerPanel) {
       window.BHChat.registerPanel({
         id: PLUGIN_ID,

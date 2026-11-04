@@ -22,6 +22,9 @@
   var API_FOLLOW_FEEDS = API_ORIGIN + '/bbs/app/profile/subscribed/events';
   var API_FOLLOW_USER_EVENTS = API_ORIGIN + '/bbs/app/profile/events';
   var API_FOLLOWING_LIST = API_ORIGIN + '/bbs/app/profile/following/simple_list';
+  var API_TASK_LIST = API_ORIGIN + '/task/list_v2/';
+  var API_SIGN_LIST = API_ORIGIN + '/task/sign_list/';
+  var API_SIGN_REPLENISH = API_ORIGIN + '/task/replenish_sign/';
   var PAGE_LIMIT = 20;
 
   function asText(value) {
@@ -298,6 +301,18 @@
   }
 
   // 好友列表（following/simple_list）：{ ok, friends: [{userid,name,avatar,level}], hasMore }
+  function userLevel(user) {
+    if (user.level_info && user.level_info.level != null && user.level_info.level !== '') {
+      var n = Number(user.level_info.level);
+      if (isFinite(n)) return n;
+    }
+    if (user.level != null && user.level !== '') {
+      var m = Number(user.level);
+      if (isFinite(m)) return m;
+    }
+    return null;
+  }
+
   function parseFollowingList(res) {
     var data = unwrapHttp(res);
     if (!data || data.status !== 'ok' || !data.result) {
@@ -321,16 +336,73 @@
     return { ok: true, friends: friends, hasMore: Number(data.result.has_more) > 0 };
   }
 
-  function userLevel(user) {
-    if (user.level_info && user.level_info.level != null && user.level_info.level !== '') {
-      var n = Number(user.level_info.level);
-      if (isFinite(n)) return n;
+  // 任务列表（task/list_v2）：提取签到卡 { ok, signed, streak, awards, level }
+  function parseTaskList(res) {
+    var data = unwrapHttp(res);
+    if (!data || data.status !== 'ok' || !data.result) {
+      return { ok: false, signed: null, streak: 0, awards: [], level: null };
     }
-    if (user.level != null && user.level !== '') {
-      var m = Number(user.level);
-      if (isFinite(m)) return m;
+    var result = data.result;
+    var out = { ok: true, signed: null, streak: 0, awards: [], level: null };
+    var groups = Array.isArray(result.task_list) ? result.task_list : [];
+    for (var i = 0; i < groups.length && out.signed === null; i++) {
+      var tasks = groups[i] && groups[i].tasks;
+      if (!Array.isArray(tasks)) continue;
+      for (var j = 0; j < tasks.length; j++) {
+        var t = tasks[j];
+        if (!t || t.type !== 'sign') continue;
+        out.signed = t.state === 'finish';
+        out.streak = Number(t.sign_in_streak) || 0;
+        if (Array.isArray(t.award_desc_v2)) {
+          for (var k = 0; k < t.award_desc_v2.length; k++) {
+            var a = t.award_desc_v2[k];
+            if (a && a.desc) out.awards.push(asText(a.desc));
+          }
+        }
+        break;
+      }
     }
-    return null;
+    if (result.user && result.user.level_info && result.user.level_info.level != null) {
+      out.level = Number(result.user.level_info.level) || null;
+    }
+    return out;
+  }
+
+  // 签到日历（task/sign_list）：{ ok, days: Map<dayKey(北京), {ts, signed}>, year }
+  // date 是秒级时间戳（其 0 点对应北京当天）；is_sign 服务端是 bool，App 客户端按字符串 '1' 比较，做兼容
+  function beijingDayKey(tsSec) {
+    var d = new Date((Number(tsSec) + 28800) * 1000);
+    return d.getUTCFullYear() + '-' + ('0' + (d.getUTCMonth() + 1)).slice(-2) + '-' + ('0' + d.getUTCDate()).slice(-2);
+  }
+
+  function parseSignList(res) {
+    var data = unwrapHttp(res);
+    if (!data || data.status !== 'ok' || !data.result) {
+      return { ok: false, days: {}, todayKey: '', replenishDesc: '' };
+    }
+    var result = data.result;
+    var days = {};
+    var list = Array.isArray(result.sign_list) ? result.sign_list : [];
+    for (var i = 0; i < list.length; i++) {
+      var item = list[i];
+      if (!item || item.date == null) continue;
+      var signed = item.is_sign === true || item.is_sign === 'true' || item.is_sign === 1 || item.is_sign === '1';
+      days[beijingDayKey(item.date)] = { ts: String(item.date), signed: signed };
+    }
+    return {
+      ok: true,
+      days: days,
+      todayKey: beijingDayKey(Math.floor(Date.now() / 1000)),
+      replenishDesc: asText(result.replenish_desc),
+    };
+  }
+
+  // 补签响应：{ ok, msg }
+  function parseReplenish(res) {
+    var data = unwrapHttp(res);
+    if (!data) return { ok: false, msg: '网络错误' };
+    if (data.status === 'ok') return { ok: true, msg: '' };
+    return { ok: false, msg: asText(data.msg) || '补签失败' };
   }
 
   return {
@@ -342,6 +414,9 @@
     API_FOLLOW_FEEDS: API_FOLLOW_FEEDS,
     API_FOLLOW_USER_EVENTS: API_FOLLOW_USER_EVENTS,
     API_FOLLOWING_LIST: API_FOLLOWING_LIST,
+    API_TASK_LIST: API_TASK_LIST,
+    API_SIGN_LIST: API_SIGN_LIST,
+    API_SIGN_REPLENISH: API_SIGN_REPLENISH,
     PAGE_LIMIT: PAGE_LIMIT,
     isAdCard: isAdCard,
     pickLinkId: pickLinkId,
@@ -358,6 +433,10 @@
     parseListPayload: parseListPayload,
     parseFollowPayload: parseFollowPayload,
     parseFollowingList: parseFollowingList,
+    parseTaskList: parseTaskList,
+    parseSignList: parseSignList,
+    parseReplenish: parseReplenish,
+    beijingDayKey: beijingDayKey,
     pickFollowLinks: pickFollowLinks,
     filterRenderableLinks: filterRenderableLinks,
     browserLinkUrl: browserLinkUrl,
