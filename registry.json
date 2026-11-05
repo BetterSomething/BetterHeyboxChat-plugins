@@ -80,6 +80,14 @@
       "author": "AwCat",
       "desc": "功能不变，闲置时归还工作集、收紧缓存。默认稳妥，高级档可更激进",
       "minClientVersion": "1.56.0"
+    },
+    {
+      "id": "md3-skin",
+      "name": "MD3 Wallpaper",
+      "version": "1.22.2",
+      "author": "LT5S",
+      "desc": "Material You 皮肤：配色、画布、控件、图标，支持导入 Wallpaper Engine 壁纸（视频可动态播放）",
+      "minClientVersion": "1.56.0"
     }
   ]
 }
